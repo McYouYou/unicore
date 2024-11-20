@@ -17,10 +17,12 @@ nodes:
       hostPort: 32003
     - containerPort: 32004 # automation backend
       hostPort: 32004
-    - containerPort: 32005 # mongodb
+    - containerPort: 32005 # tidb
       hostPort: 32005
     - containerPort: 32006 # 备用
       hostPort: 32006
+    - containerPort: 32007 # 备用
+      hostPort: 32007
 - role: worker
 - role: worker
 - role: worker

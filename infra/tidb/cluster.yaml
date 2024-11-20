@@ -37,6 +37,9 @@ spec:
     # to configure a short timeout
     evictLeaderTimeout: 1m
     replicas: 3
+    env:
+      - name: GRPC_DNS_RESOLVER
+        value: native
     # if storageClassName is not set, the default Storage Class of the Kubernetes cluster will be used
     # storageClassName: local-storage
     requests:

@@ -30,7 +30,7 @@ import (
 	unicorev1 "github.com/mcyouyou/unicore/api/v1"
 )
 
-var _ = Describe("Deployer Controller", func() {
+var _ = Describe("App Controller", func() {
 	Context("When reconciling a resource", func() {
 		const resourceName = "test-resource"
 
@@ -40,13 +40,13 @@ var _ = Describe("Deployer Controller", func() {
 			Name:      resourceName,
 			Namespace: "default", // TODO(user):Modify as needed
 		}
-		deployer := &unicorev1.Deployer{}
+		app := &unicorev1.App{}
 
 		BeforeEach(func() {
-			By("creating the custom resource for the Kind Deployer")
-			err := k8sClient.Get(ctx, typeNamespacedName, deployer)
+			By("creating the custom resource for the Kind App")
+			err := k8sClient.Get(ctx, typeNamespacedName, app)
 			if err != nil && errors.IsNotFound(err) {
-				resource := &unicorev1.Deployer{
+				resource := &unicorev1.App{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      resourceName,
 						Namespace: "default",
@@ -59,16 +59,16 @@ var _ = Describe("Deployer Controller", func() {
 
 		AfterEach(func() {
 			// TODO(user): Cleanup logic after each test, like removing the resource instance.
-			resource := &unicorev1.Deployer{}
+			resource := &unicorev1.App{}
 			err := k8sClient.Get(ctx, typeNamespacedName, resource)
 			Expect(err).NotTo(HaveOccurred())
 
-			By("Cleanup the specific resource instance Deployer")
+			By("Cleanup the specific resource instance App")
 			Expect(k8sClient.Delete(ctx, resource)).To(Succeed())
 		})
 		It("should successfully reconcile the resource", func() {
 			By("Reconciling the created resource")
-			controllerReconciler := &DeployerReconciler{
+			controllerReconciler := &AppReconciler{
 				Client: k8sClient,
 				Scheme: k8sClient.Scheme(),
 			}

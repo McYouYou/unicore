@@ -18,6 +18,7 @@ package controller
 
 import (
 	"context"
+	"github.com/mcyouyou/unicore/internal/controller/app"
 
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -27,26 +28,30 @@ import (
 	unicorev1 "github.com/mcyouyou/unicore/api/v1"
 )
 
-// DeployerReconciler reconciles a Deployer object
-type DeployerReconciler struct {
+// AppReconciler reconciles a App object
+type AppReconciler struct {
 	client.Client
 	Scheme *runtime.Scheme
 }
 
-// +kubebuilder:rbac:groups=unicore.mcyou.cn,resources=deployers,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups=unicore.mcyou.cn,resources=deployers/status,verbs=get;update;patch
-// +kubebuilder:rbac:groups=unicore.mcyou.cn,resources=deployers/finalizers,verbs=update
+// +kubebuilder:rbac:groups=core,resources=pods,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=core,resources=pods/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=core,resources=events,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=core,resources=persistentvolumeclaims,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=unicore.mcyou.cn,resources=apps,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=unicore.mcyou.cn,resources=apps/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=unicore.mcyou.cn,resources=apps/finalizers,verbs=update
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
 // TODO(user): Modify the Reconcile function to compare the state specified by
-// the Deployer object against the actual cluster state, and then
+// the App object against the actual cluster state, and then
 // perform operations to make the cluster state reflect the state specified by
 // the user.
 //
 // For more details, check Reconcile and its Result here:
 // - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.18.4/pkg/reconcile
-func (r *DeployerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+func (r *AppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	_ = log.FromContext(ctx)
 
 	// TODO(user): your logic here
@@ -55,8 +60,25 @@ func (r *DeployerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 }
 
 // SetupWithManager sets up the controller with the Manager.
-func (r *DeployerReconciler) SetupWithManager(mgr ctrl.Manager) error {
+func (r *AppReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&unicorev1.Deployer{}).
+		For(&unicorev1.App{}).
 		Complete(r)
+}
+
+// tool struct to control the entire App
+type appController struct {
+	podControl   *app.PodController
+	stateControl *app.StateController
+}
+
+func newAppController(podC *app.PodController, stateC *app.StateController) *appController {
+	return &appController{
+		podControl:   podC,
+		stateControl: stateC,
+	}
+}
+
+func (c *appController) Update() {
+
 }
