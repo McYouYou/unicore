@@ -18,6 +18,7 @@ package controller
 
 import (
 	"context"
+	unicorev1 "github.com/mcyouyou/unicore/api/deployer/v1"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -26,8 +27,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-
-	unicorev1 "github.com/mcyouyou/unicore/api/v1"
 )
 
 var _ = Describe("App Controller", func() {

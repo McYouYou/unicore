@@ -2,7 +2,7 @@ package app
 
 import (
 	"context"
-	unicore "github.com/mcyouyou/unicore/api/v1"
+	unicore "github.com/mcyouyou/unicore/api/deployer/v1"
 	apps "k8s.io/api/apps/v1"
 )
 

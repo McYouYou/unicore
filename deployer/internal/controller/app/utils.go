@@ -3,7 +3,7 @@ package app
 import (
 	"encoding/json"
 	"fmt"
-	unicore "github.com/mcyouyou/unicore/api/v1"
+	v2 "github.com/mcyouyou/unicore/api/deployer/v1"
 	apps "k8s.io/api/apps/v1"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -22,10 +22,10 @@ const (
 	LabelPodOrdinal  = "unicore.mcyou.cn/pod-ordinal"
 )
 
-var patchCodec = scheme.Codecs.LegacyCodec(unicore.GroupVersion)
+var patchCodec = scheme.Codecs.LegacyCodec(v2.GroupVersion)
 
 // get pvc to-create from app.Spec.VolumeClaimTemplates
-func getPVCFromApp(app *unicore.App, pod *v1.Pod) map[string]*v1.PersistentVolumeClaim {
+func getPVCFromApp(app *v2.App, pod *v1.Pod) map[string]*v1.PersistentVolumeClaim {
 	_, ordinal := getPodAppNameAndOrdinal(pod)
 	pvcs := make(map[string]*v1.PersistentVolumeClaim, len(app.Spec.VolumeClaimTemplates))
 	for _, pvc := range app.Spec.VolumeClaimTemplates {
@@ -51,16 +51,16 @@ func getPodAppNameAndOrdinal(pod *v1.Pod) (string, int) {
 }
 
 // get pvc's to-create name for given ordinal
-func getPVCOutName(app *unicore.App, pvc *v1.PersistentVolumeClaim, ordinal int) string {
+func getPVCOutName(app *v2.App, pvc *v1.PersistentVolumeClaim, ordinal int) string {
 	return fmt.Sprintf("%s-%s-%d", app.Name, pvc.Name, ordinal)
 }
 
-func getPodOutName(app *unicore.App, ordinal int) string {
+func getPodOutName(app *v2.App, ordinal int) string {
 	return fmt.Sprintf("%s-%d", app.Name, ordinal)
 }
 
 // check if the pod is a member of app
-func matchAppAndPod(app *unicore.App, pod *v1.Pod) bool {
+func matchAppAndPod(app *v2.App, pod *v1.Pod) bool {
 	appName, ordinal := getPodAppNameAndOrdinal(pod)
 	if ordinal < 0 {
 		return false
@@ -70,7 +70,7 @@ func matchAppAndPod(app *unicore.App, pod *v1.Pod) bool {
 }
 
 // set pod's identity to match app
-func updatePodIdentity(app *unicore.App, pod *v1.Pod) {
+func updatePodIdentity(app *v2.App, pod *v1.Pod) {
 	_, ordinal := getPodAppNameAndOrdinal(pod)
 	pod.Name = getPodOutName(app, ordinal)
 	pod.Namespace = app.Namespace
@@ -82,7 +82,7 @@ func updatePodIdentity(app *unicore.App, pod *v1.Pod) {
 }
 
 // check if the pod's current volumes match the app's requirement
-func matchAppPVC(app *unicore.App, pod *v1.Pod) bool {
+func matchAppPVC(app *v2.App, pod *v1.Pod) bool {
 	_, ordinal := getPodAppNameAndOrdinal(pod)
 	if ordinal < 0 {
 		return false
@@ -102,7 +102,7 @@ func matchAppPVC(app *unicore.App, pod *v1.Pod) bool {
 }
 
 // update pod volumes to match the app. pod volume with the same name will be overwritten
-func updatePodVolume(app *unicore.App, pod *v1.Pod) {
+func updatePodVolume(app *v2.App, pod *v1.Pod) {
 	toCreatePVC := getPVCFromApp(app, pod)
 	newVolumes := make([]v1.Volume, 0, len(toCreatePVC))
 	for name, pvc := range toCreatePVC {
@@ -122,7 +122,7 @@ func updatePodVolume(app *unicore.App, pod *v1.Pod) {
 }
 
 // return json marshaled patch of app.spec.podSpecTemplate
-func getAppPatch(app *unicore.App) ([]byte, error) {
+func getAppPatch(app *v2.App) ([]byte, error) {
 	str, err := runtime.Encode(patchCodec, app)
 	if err != nil {
 		return nil, err
@@ -144,13 +144,13 @@ func getAppPatch(app *unicore.App) ([]byte, error) {
 }
 
 // ApplyRevision merge the origin app and the revision's data to create a new one
-func ApplyRevision(app *unicore.App, revision *apps.ControllerRevision) (*unicore.App, error) {
+func ApplyRevision(app *v2.App, revision *apps.ControllerRevision) (*v2.App, error) {
 	clone := app.DeepCopy()
 	patched, err := strategicpatch.StrategicMergePatch([]byte(runtime.EncodeOrDie(patchCodec, clone)), revision.Data.Raw, clone)
 	if err != nil {
 		return nil, err
 	}
-	restoredApp := &unicore.App{}
+	restoredApp := &v2.App{}
 	if err = json.Unmarshal(patched, restoredApp); err != nil {
 		return nil, err
 	}
@@ -158,7 +158,7 @@ func ApplyRevision(app *unicore.App, revision *apps.ControllerRevision) (*unicor
 }
 
 // getMinReadySeconds returns the minReadySeconds set in the rollingUpdate, default is 0
-func getMinReadySeconds(app *unicore.App) int32 {
+func getMinReadySeconds(app *v2.App) int32 {
 	if app.Spec.UpdateStrategy.RollingUpdate == nil ||
 		app.Spec.UpdateStrategy.RollingUpdate.MinReadySeconds == nil {
 		return 0
@@ -211,7 +211,7 @@ func getPodRevision(pod *v1.Pod) string {
 }
 
 // creat pod for app from its template
-func newAppPod(app *unicore.App, ordinal int) *v1.Pod {
+func newAppPod(app *v2.App, ordinal int) *v1.Pod {
 	pod, _ := controller.GetPodFromTemplate(&app.Spec.Template, app, metav1.NewControllerRef(app, controllerKind))
 	pod.Name = getPodOutName(app, ordinal)
 	updatePodIdentity(app, pod)
@@ -222,7 +222,7 @@ func newAppPod(app *unicore.App, ordinal int) *v1.Pod {
 }
 
 // update pod's volume spec to match with its template pvc
-func updateVolume(app *unicore.App, pod *v1.Pod) {
+func updateVolume(app *v2.App, pod *v1.Pod) {
 	currentVolumes := pod.Spec.Volumes
 	claims := getPVCFromApp(app, pod)
 	newVolumes := make([]v1.Volume, 0, len(claims))
@@ -278,6 +278,6 @@ func getPodAvailableAndNextCheckInterval(pod *v1.Pod, minReadySeconds int32) (bo
 	return true, 0
 }
 
-func getAppKey(app *unicore.App) string {
+func getAppKey(app *v2.App) string {
 	return app.ObjectMeta.GetNamespace() + "/" + app.ObjectMeta.GetName()
 }

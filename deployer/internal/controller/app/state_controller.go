@@ -3,13 +3,17 @@ package app
 import (
 	"context"
 	"fmt"
-	unicore "github.com/mcyouyou/unicore/api/v1"
+	v2 "github.com/mcyouyou/unicore/api/deployer/v1"
 	"github.com/mcyouyou/unicore/internal/controller/requeue_duration"
+	lister "github.com/mcyouyou/unicore/pkg/generated/listers/deployer/v1"
 	apps "k8s.io/api/apps/v1"
 	"k8s.io/api/core/v1"
+	"k8s.io/apiextensions-apiserver/examples/client-go/pkg/client/clientset/versioned"
+	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/tools/record"
+	"k8s.io/client-go/util/retry"
 	"k8s.io/klog/v2"
 	"k8s.io/kubernetes/pkg/controller/history"
 	"k8s.io/utils/ptr"
@@ -18,13 +22,16 @@ import (
 )
 
 var (
-	controllerKind = unicore.GroupVersion.WithKind("App")
+	controllerKind = v2.GroupVersion.WithKind("App")
 )
 
 type StateController struct {
 	podController *PodController
 	recorder      record.EventRecorder
 	history       history.Interface
+	// client for app
+	client    versioned.Interface
+	appLister lister.AppLister
 }
 
 // NewStateController new a stateController to manage revision and state
@@ -36,12 +43,12 @@ func NewStateController(podController *PodController, recorder record.EventRecor
 	}
 }
 
-func (c *StateController) UpdateApp(ctx context.Context, app *unicore.App, pods []*v1.Pod) error {
+func (c *StateController) UpdateApp(ctx context.Context, app *v2.App, pods []*v1.Pod) error {
 	err := c.updateApp(ctx, app, pods)
 
 }
 
-func (c *StateController) updateApp(ctx context.Context, app *unicore.App, pods []*v1.Pod) error {
+func (c *StateController) updateApp(ctx context.Context, app *v2.App, pods []*v1.Pod) error {
 	if app == nil {
 		return fmt.Errorf("app is nil")
 	}
@@ -118,18 +125,24 @@ func (c *StateController) updateApp(ctx context.Context, app *unicore.App, pods 
 		currentRevision = updateRevision
 	}
 
-	// TODO: refresh update expectation
+	currentStatus, getStatusErr := c.applyUpdate(ctx, app, currentRevision, updateRevision, collisionCount, pods, revisions)
+	if getStatusErr != nil && currentStatus == nil {
+		return getStatusErr
+	}
 
+	updateStatusErr := c.updateAppStatus()
+
+	return nil
 }
 
 // core procedure of updating the status and pods
 func (c *StateController) applyUpdate(ctx context.Context,
-	app *unicore.App,
+	app *v2.App,
 	currentRevision *apps.ControllerRevision,
 	updateRevision *apps.ControllerRevision,
 	collisionCount int32,
 	pods []*v1.Pod,
-	revisions *apps.ControllerRevision) (*unicore.AppStatus, error) {
+	revisions []*apps.ControllerRevision) (*v2.AppStatus, error) {
 	selector, err := metav1.LabelSelectorAsSelector(app.Spec.Selector)
 	if err != nil {
 		return app.Status.DeepCopy(), err
@@ -144,7 +157,7 @@ func (c *StateController) applyUpdate(ctx context.Context,
 		return app.Status.DeepCopy(), err
 	}
 
-	status := unicore.AppStatus{}
+	status := v2.AppStatus{}
 	status.CurrentRevision = currentRevision.Name
 	status.UpdateRevision = updateRevision.Name
 	status.ObservedGeneration = app.Generation
@@ -171,7 +184,8 @@ func (c *StateController) applyUpdate(ctx context.Context,
 		}
 	}
 
-	// create extra pod to fill the empty index of replica list
+	// create extra pod to fill the empty slot of replica list
+	// this is where the newer version pod is created
 	for i := 0; i < replicaCnt; i++ {
 		if replicas[i] == nil {
 			replicas[i] = newVersionedPodForApp(currentSet, updateSet, currentRevision.Name, updateRevision.Name,
@@ -214,18 +228,20 @@ func (c *StateController) applyUpdate(ctx context.Context,
 		return &status, nil
 	}
 
-	// check if all pods match spec now. if not burstable, update can't be applied
-	allPodsMatch := true
+	// now we check every pod that should be valid, delete it if failed, create it if not created, and wait until
+	// 	all pods are there and match their identities.
+	// note that we use pods.Update() to match pod's identity with the app, only editing its labels and annotations,
+	// 	not its revision.
+	shouldExit := true
 	logger := klog.FromContext(ctx)
 	var runErr error
-
 	for i := range replicas {
 		if replicas[i] == nil {
 			continue
 		}
 		// pods in these two phase should be restarted
 		if replicas[i].Status.Phase == v1.PodFailed || replicas[i].Status.Phase == v1.PodSucceeded {
-			allPodsMatch = false
+			shouldExit = false
 			if replicas[i].DeletionTimestamp == nil {
 				if err := c.podController.DeleteStatefulPod(ctx, app, replicas[i]); err != nil {
 					c.recorder.Eventf(app, v1.EventTypeWarning, "FailedDelete", "failed to delete pod %s: %v", replicas[i].Name, err)
@@ -237,10 +253,10 @@ func (c *StateController) applyUpdate(ctx context.Context,
 
 		// if pod not created, create one
 		if replicas[i].Status.Phase == "" {
-			allPodsMatch = false
+			shouldExit = false
 			if err := c.podController.CreateStatefulPod(ctx, app, replicas[i]); err != nil {
 				condition := apps.StatefulSetCondition{
-					Type:    unicore.ConditionFailCreatePod,
+					Type:    v2.ConditionFailCreatePod,
 					Status:  v1.ConditionTrue,
 					Message: fmt.Sprintf("failed to create pod %s: %v", replicas[i].Name, err),
 				}
@@ -255,7 +271,7 @@ func (c *StateController) applyUpdate(ctx context.Context,
 		}
 
 		if replicas[i].Status.Phase == v1.PodPending {
-			allPodsMatch = false
+			shouldExit = false
 			logger.V(4).Info("App is creating pvc for pending pod", "app", klog.KObj(app), klog.KObj(replicas[i]))
 			if err := c.podController.createPVC(app, replicas[i]); err != nil {
 				runErr = err
@@ -266,7 +282,7 @@ func (c *StateController) applyUpdate(ctx context.Context,
 		// no bursting: for terminating pod: wait until graceful exit
 		if replicas[i].DeletionTimestamp != nil && !burstable {
 			logger.V(4).Info("App is waiting for pod to terminate", "app", klog.KObj(app), "pod", klog.KObj(replicas[i]))
-			allPodsMatch = false
+			shouldExit = false
 			break
 		}
 		if replicas[i].DeletionTimestamp != nil && burstable {
@@ -280,7 +296,7 @@ func (c *StateController) applyUpdate(ctx context.Context,
 		if !burstable {
 			// not burstable and a pod is unavailable, preceding procedures can't be done
 			if !isAvailable {
-				allPodsMatch = false
+				shouldExit = false
 				if checkInterval > 0 {
 					// check it next reconcile
 					requeue_duration.Push(getAppKey(app), checkInterval)
@@ -302,33 +318,32 @@ func (c *StateController) applyUpdate(ctx context.Context,
 			break
 		}
 
-		if matchAppAndPod(app, replicas[i]) && matchAppPVC(app, replicas[i]) {
-			continue
-		}
-
-		// avoid changing shared cache
-		replica := replicas[i].DeepCopy()
-		// finally we can update the pod
-		if err := c.podController.UpdateStatefulPod(ctx, app, replica); err != nil {
-			condition := apps.StatefulSetCondition{
-				Type:    unicore.ConditionFailUpdatePod,
-				Status:  v1.ConditionTrue,
-				Message: fmt.Sprintf("failed to update pod %s: %v", replicas[i].Name, err),
+		// if pod identity mismatch, update its identity
+		if !matchAppAndPod(app, replicas[i]) || !matchAppPVC(app, replicas[i]) {
+			// avoid changing shared cache
+			replica := replicas[i].DeepCopy()
+			// update pod's identity to match the app
+			if err := c.podController.UpdateStatefulPod(ctx, app, replica); err != nil {
+				condition := apps.StatefulSetCondition{
+					Type:    v2.ConditionFailUpdatePod,
+					Status:  v1.ConditionTrue,
+					Message: fmt.Sprintf("failed to update pod %s: %v", replicas[i].Name, err),
+				}
+				setAppCondition(&status, condition)
+				runErr = err
+				break
 			}
-			setAppCondition(&status, condition)
-			runErr = err
-			break
 		}
 	}
 
-	if runErr != nil || !allPodsMatch {
+	if runErr != nil || !shouldExit {
 		updateStatus(&status, minReadySeconds, currentRevision, updateRevision, replicas, invalidPods)
 		return &status, runErr
 	}
 
 	// at this point, if not burstable, all pods of spec.Replicas are available.
 	// then we can make deletion of invalid pods in a decreasing order, if all predecessors are ready
-	shouldExit := false
+	shouldExit = false
 	for i := range invalidPods {
 		pod := invalidPods[i]
 		if pod.DeletionTimestamp != nil {
@@ -366,10 +381,87 @@ func (c *StateController) applyUpdate(ctx context.Context,
 		return &status, nil
 	}
 
+	// for rollingUpdate strategy, we terminate the pod with the largest ordinal that does not match the updateRevision
+	updateMin := 0
+	if app.Spec.UpdateStrategy.RollingUpdate != nil {
+		// update can only be done for pod [partition:]
+		updateMin = int(*app.Spec.UpdateStrategy.RollingUpdate.Partition)
+	}
+	for target := len(replicas); target >= updateMin; target-- {
+		if getPodRevision(replicas[target]) != updateRevision.Name && replicas[target].DeletionTimestamp == nil {
+			logger.V(4).Info("terminating pod for update", "app", klog.KObj(app), "pod", klog.KObj(replicas[target]))
+			if err := c.podController.DeleteStatefulPod(ctx, app, replicas[target]); err != nil {
+				if !errors.IsNotFound(err) {
+					return &status, err
+				}
+			}
+			status.CurrentReplicas--
+			return &status, err
+		}
+
+		// wait for unhealthy pods to update
+		if !(getPodReady(replicas[target]) && replicas[target].DeletionTimestamp != nil) {
+			logger.V(4).Info("waiting for pod to update", "app", klog.KObj(app), "pod", klog.KObj(replicas[target]))
+			return &status, nil
+		}
+	}
+
+	return &status, nil
+}
+
+func (c *StateController) updateAppStatus(ctx context.Context, app *v2.App, status *v2.AppStatus) error {
+	// if rollingUpdate done, update its status
+	completeRollingUpdate(app, status)
+
+	// status consistent, no need to update
+	if statusConsistent(app, status) {
+		return nil
+	}
+
+	// it's going to be modified, copy one
+	app = app.DeepCopy()
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		app.Status = *status
+		err := c.client
+	})
+}
+
+// check if ObservedGeneration is less or equal to the app's Generation and all fields of status match the app
+func statusConsistent(app *v2.App, status *v2.AppStatus) bool {
+	if status.ObservedGeneration > app.Status.ObservedGeneration || status.Replicas != app.Status.Replicas ||
+		status.CurrentReplicas != app.Status.CurrentReplicas || status.ReadyReplicas != app.Status.ReadyReplicas ||
+		status.AvailableReplicas != app.Status.AvailableReplicas || status.UpdatedReplicas != app.Status.UpdatedReplicas ||
+		status.CurrentRevision != app.Status.CurrentRevision || status.UpdateRevision != app.Status.UpdateRevision ||
+		status.LabelSelector != app.Status.LabelSelector {
+		return false
+	}
+
+	vcIndex := make(map[string]int)
+	for i, v := range status.VolumeClaims {
+		vcIndex[v.VolumeClaimName] = i
+	}
+	for _, v := range app.Status.VolumeClaims {
+		if idx, ok := vcIndex[v.VolumeClaimName]; !ok {
+			return false
+		} else if status.VolumeClaims[idx].CompatibleReplicas != v.CompatibleReplicas ||
+			status.VolumeClaims[idx].CompatibleReadyReplicas != v.CompatibleReadyReplicas {
+			return false
+		}
+	}
+	return true
+}
+
+// update status to finish a RollingUpdate if it's done
+func completeRollingUpdate(app *v2.App, status *v2.AppStatus) {
+	if app.Spec.UpdateStrategy.Type == apps.RollingUpdateStatefulSetStrategyType && status.UpdatedReplicas == status.Replicas &&
+		status.ReadyReplicas == status.Replicas {
+		status.CurrentReplicas = status.UpdatedReplicas
+		status.CurrentRevision = status.UpdateRevision
+	}
 }
 
 // decide and create a pod for an app either from currentRevision or updateRevision
-func newVersionedPodForApp(currentApp, updateApp *unicore.App, currentRevision, updateRevision string, ordinal int,
+func newVersionedPodForApp(currentApp, updateApp *v2.App, currentRevision, updateRevision string, ordinal int,
 	replicas []*v1.Pod) *v1.Pod {
 	if isCurrentRevisionExpected(currentApp, updateRevision, ordinal, replicas) {
 		pod := newAppPod(currentApp, ordinal)
@@ -388,7 +480,7 @@ func newVersionedPodForApp(currentApp, updateApp *unicore.App, currentRevision, 
 }
 
 // check if the given ordinal pod is expected to be at currentRevision instead of updateRevision
-func isCurrentRevisionExpected(app *unicore.App, updateRevision string, ordinal int, replicas []*v1.Pod) bool {
+func isCurrentRevisionExpected(app *v2.App, updateRevision string, ordinal int, replicas []*v1.Pod) bool {
 	// use no rolling update and revisions, from spec data to create pods instead
 	if app.Spec.UpdateStrategy.Type != apps.RollingUpdateStatefulSetStrategyType {
 		return false
@@ -415,7 +507,7 @@ func isCurrentRevisionExpected(app *unicore.App, updateRevision string, ordinal 
 	return currentRevisionCnt < int(*app.Spec.UpdateStrategy.RollingUpdate.Partition)
 }
 
-func getAppConditionFromType(status *unicore.AppStatus, condType apps.StatefulSetConditionType) *apps.StatefulSetCondition {
+func getAppConditionFromType(status *v2.AppStatus, condType apps.StatefulSetConditionType) *apps.StatefulSetCondition {
 	for i := range status.Conditions {
 		c := status.Conditions[i]
 		if c.Type == condType {
@@ -426,7 +518,7 @@ func getAppConditionFromType(status *unicore.AppStatus, condType apps.StatefulSe
 }
 
 // update status.Conditions with given condition
-func setAppCondition(status *unicore.AppStatus, condition apps.StatefulSetCondition) {
+func setAppCondition(status *v2.AppStatus, condition apps.StatefulSetCondition) {
 	currentCondition := getAppConditionFromType(status, condition.Type)
 	if currentCondition != nil && currentCondition.Status == condition.Status && currentCondition.Reason == condition.Reason {
 		return

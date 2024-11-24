@@ -19,6 +19,7 @@ package main
 import (
 	"crypto/tls"
 	"flag"
+	unicorev1 "github.com/mcyouyou/unicore/api/deployer/v1"
 	"os"
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
@@ -35,7 +36,6 @@ import (
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
-	unicorev1 "github.com/mcyouyou/unicore/api/v1"
 	"github.com/mcyouyou/unicore/internal/controller"
 	// +kubebuilder:scaffold:imports
 )

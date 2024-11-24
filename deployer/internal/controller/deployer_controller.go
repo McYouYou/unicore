@@ -18,13 +18,12 @@ package controller
 
 import (
 	"context"
+	unicorev1 "github.com/mcyouyou/unicore/api/deployer/v1"
 
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
-
-	unicorev1 "github.com/mcyouyou/unicore/api/v1"
 )
 
 // DeployerReconciler reconciles a Deployer object

@@ -3,7 +3,7 @@ package app
 import (
 	"context"
 	"fmt"
-	unicore "github.com/mcyouyou/unicore/api/v1"
+	unicore "github.com/mcyouyou/unicore/api/deployer/v1"
 	log "github.com/sirupsen/logrus"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -50,6 +50,7 @@ func (c *PodController) CreateStatefulPod(ctx context.Context, app *unicore.App,
 	return err
 }
 
+// UpdateStatefulPod update pod's identity to match the app, instead of updating its revision
 func (c *PodController) UpdateStatefulPod(ctx context.Context, app *unicore.App, pod *v1.Pod) error {
 	triedUpdate := false
 	// use this retry func to update to avoid conflict

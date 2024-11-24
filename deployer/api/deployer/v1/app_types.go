@@ -17,7 +17,7 @@ limitations under the License.
 package v1
 
 import (
-	"github.com/mcyouyou/unicore/api/v1/inplace"
+	"github.com/mcyouyou/unicore/api/deployer/v1/inplace"
 	apps "k8s.io/api/apps/v1"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -131,6 +131,7 @@ type AppStatus struct {
 
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
+// +genclient
 
 // App is the Schema for the apps API
 type App struct {
