@@ -18,8 +18,8 @@ limitations under the License.
 package deployer
 
 import (
-	v1 "github.com/mcyouyou/unicore/clientset/pkg/generated/informers/externalversions/deployer/v1"
-	internalinterfaces "github.com/mcyouyou/unicore/clientset/pkg/generated/informers/externalversions/internalinterfaces"
+	v1 "github.com/mcyouyou/unicore/pkg/generated/informers/externalversions/deployer/v1"
+	internalinterfaces "github.com/mcyouyou/unicore/pkg/generated/informers/externalversions/internalinterfaces"
 )
 
 // Interface provides access to each of this group's versions.

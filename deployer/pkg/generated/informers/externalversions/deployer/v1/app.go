@@ -22,9 +22,9 @@ import (
 	time "time"
 
 	deployerv1 "github.com/mcyouyou/unicore/api/deployer/v1"
-	versioned "github.com/mcyouyou/unicore/clientset/pkg/generated/clientset/versioned"
-	internalinterfaces "github.com/mcyouyou/unicore/clientset/pkg/generated/informers/externalversions/internalinterfaces"
-	v1 "github.com/mcyouyou/unicore/clientset/pkg/generated/listers/deployer/v1"
+	versioned "github.com/mcyouyou/unicore/pkg/generated/clientset/versioned"
+	internalinterfaces "github.com/mcyouyou/unicore/pkg/generated/informers/externalversions/internalinterfaces"
+	v1 "github.com/mcyouyou/unicore/pkg/generated/listers/deployer/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	runtime "k8s.io/apimachinery/pkg/runtime"
 	watch "k8s.io/apimachinery/pkg/watch"

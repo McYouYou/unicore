@@ -6,7 +6,7 @@ SCRIPT_ROOT=$(dirname "${BASH_SOURCE[0]}")/..
 
 source /root/go/pkg/mod/k8s.io/code-generator@v0.30.1/kube_codegen.sh
 
-THIS_PKG="github.com/mcyouyou/unicore/clientset"
+THIS_PKG="github.com/mcyouyou/unicore"
 
 kube::codegen::gen_helpers \
     --boilerplate "${SCRIPT_ROOT}/hack/boilerplate.go.txt" \

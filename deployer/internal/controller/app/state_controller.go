@@ -3,12 +3,12 @@ package app
 import (
 	"context"
 	"fmt"
-	v2 "github.com/mcyouyou/unicore/api/deployer/v1"
+	unicore "github.com/mcyouyou/unicore/api/deployer/v1"
 	"github.com/mcyouyou/unicore/internal/controller/requeue_duration"
+	"github.com/mcyouyou/unicore/pkg/generated/clientset/versioned"
 	lister "github.com/mcyouyou/unicore/pkg/generated/listers/deployer/v1"
 	apps "k8s.io/api/apps/v1"
 	"k8s.io/api/core/v1"
-	"k8s.io/apiextensions-apiserver/examples/client-go/pkg/client/clientset/versioned"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -22,7 +22,7 @@ import (
 )
 
 var (
-	controllerKind = v2.GroupVersion.WithKind("App")
+	controllerKind = unicore.GroupVersion.WithKind("App")
 )
 
 type StateController struct {
@@ -43,12 +43,12 @@ func NewStateController(podController *PodController, recorder record.EventRecor
 	}
 }
 
-func (c *StateController) UpdateApp(ctx context.Context, app *v2.App, pods []*v1.Pod) error {
+func (c *StateController) UpdateApp(ctx context.Context, app *unicore.App, pods []*v1.Pod) error {
 	err := c.updateApp(ctx, app, pods)
 
 }
 
-func (c *StateController) updateApp(ctx context.Context, app *v2.App, pods []*v1.Pod) error {
+func (c *StateController) updateApp(ctx context.Context, app *unicore.App, pods []*v1.Pod) error {
 	if app == nil {
 		return fmt.Errorf("app is nil")
 	}
@@ -137,12 +137,12 @@ func (c *StateController) updateApp(ctx context.Context, app *v2.App, pods []*v1
 
 // core procedure of updating the status and pods
 func (c *StateController) applyUpdate(ctx context.Context,
-	app *v2.App,
+	app *unicore.App,
 	currentRevision *apps.ControllerRevision,
 	updateRevision *apps.ControllerRevision,
 	collisionCount int32,
 	pods []*v1.Pod,
-	revisions []*apps.ControllerRevision) (*v2.AppStatus, error) {
+	revisions []*apps.ControllerRevision) (*unicore.AppStatus, error) {
 	selector, err := metav1.LabelSelectorAsSelector(app.Spec.Selector)
 	if err != nil {
 		return app.Status.DeepCopy(), err
@@ -157,7 +157,7 @@ func (c *StateController) applyUpdate(ctx context.Context,
 		return app.Status.DeepCopy(), err
 	}
 
-	status := v2.AppStatus{}
+	status := unicore.AppStatus{}
 	status.CurrentRevision = currentRevision.Name
 	status.UpdateRevision = updateRevision.Name
 	status.ObservedGeneration = app.Generation
@@ -256,7 +256,7 @@ func (c *StateController) applyUpdate(ctx context.Context,
 			shouldExit = false
 			if err := c.podController.CreateStatefulPod(ctx, app, replicas[i]); err != nil {
 				condition := apps.StatefulSetCondition{
-					Type:    v2.ConditionFailCreatePod,
+					Type:    unicore.ConditionFailCreatePod,
 					Status:  v1.ConditionTrue,
 					Message: fmt.Sprintf("failed to create pod %s: %v", replicas[i].Name, err),
 				}
@@ -325,7 +325,7 @@ func (c *StateController) applyUpdate(ctx context.Context,
 			// update pod's identity to match the app
 			if err := c.podController.UpdateStatefulPod(ctx, app, replica); err != nil {
 				condition := apps.StatefulSetCondition{
-					Type:    v2.ConditionFailUpdatePod,
+					Type:    unicore.ConditionFailUpdatePod,
 					Status:  v1.ConditionTrue,
 					Message: fmt.Sprintf("failed to update pod %s: %v", replicas[i].Name, err),
 				}
@@ -409,7 +409,7 @@ func (c *StateController) applyUpdate(ctx context.Context,
 	return &status, nil
 }
 
-func (c *StateController) updateAppStatus(ctx context.Context, app *v2.App, status *v2.AppStatus) error {
+func (c *StateController) updateAppStatus(ctx context.Context, app *unicore.App, status *unicore.AppStatus) error {
 	// if rollingUpdate done, update its status
 	completeRollingUpdate(app, status)
 
@@ -422,12 +422,12 @@ func (c *StateController) updateAppStatus(ctx context.Context, app *v2.App, stat
 	app = app.DeepCopy()
 	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		app.Status = *status
-		err := c.client
+		err := c.client.UnicoreV1().Apps()
 	})
 }
 
 // check if ObservedGeneration is less or equal to the app's Generation and all fields of status match the app
-func statusConsistent(app *v2.App, status *v2.AppStatus) bool {
+func statusConsistent(app *unicore.App, status *unicore.AppStatus) bool {
 	if status.ObservedGeneration > app.Status.ObservedGeneration || status.Replicas != app.Status.Replicas ||
 		status.CurrentReplicas != app.Status.CurrentReplicas || status.ReadyReplicas != app.Status.ReadyReplicas ||
 		status.AvailableReplicas != app.Status.AvailableReplicas || status.UpdatedReplicas != app.Status.UpdatedReplicas ||
@@ -452,7 +452,7 @@ func statusConsistent(app *v2.App, status *v2.AppStatus) bool {
 }
 
 // update status to finish a RollingUpdate if it's done
-func completeRollingUpdate(app *v2.App, status *v2.AppStatus) {
+func completeRollingUpdate(app *unicore.App, status *unicore.AppStatus) {
 	if app.Spec.UpdateStrategy.Type == apps.RollingUpdateStatefulSetStrategyType && status.UpdatedReplicas == status.Replicas &&
 		status.ReadyReplicas == status.Replicas {
 		status.CurrentReplicas = status.UpdatedReplicas
@@ -461,7 +461,7 @@ func completeRollingUpdate(app *v2.App, status *v2.AppStatus) {
 }
 
 // decide and create a pod for an app either from currentRevision or updateRevision
-func newVersionedPodForApp(currentApp, updateApp *v2.App, currentRevision, updateRevision string, ordinal int,
+func newVersionedPodForApp(currentApp, updateApp *unicore.App, currentRevision, updateRevision string, ordinal int,
 	replicas []*v1.Pod) *v1.Pod {
 	if isCurrentRevisionExpected(currentApp, updateRevision, ordinal, replicas) {
 		pod := newAppPod(currentApp, ordinal)
@@ -480,7 +480,7 @@ func newVersionedPodForApp(currentApp, updateApp *v2.App, currentRevision, updat
 }
 
 // check if the given ordinal pod is expected to be at currentRevision instead of updateRevision
-func isCurrentRevisionExpected(app *v2.App, updateRevision string, ordinal int, replicas []*v1.Pod) bool {
+func isCurrentRevisionExpected(app *unicore.App, updateRevision string, ordinal int, replicas []*v1.Pod) bool {
 	// use no rolling update and revisions, from spec data to create pods instead
 	if app.Spec.UpdateStrategy.Type != apps.RollingUpdateStatefulSetStrategyType {
 		return false
@@ -507,7 +507,7 @@ func isCurrentRevisionExpected(app *v2.App, updateRevision string, ordinal int, 
 	return currentRevisionCnt < int(*app.Spec.UpdateStrategy.RollingUpdate.Partition)
 }
 
-func getAppConditionFromType(status *v2.AppStatus, condType apps.StatefulSetConditionType) *apps.StatefulSetCondition {
+func getAppConditionFromType(status *unicore.AppStatus, condType apps.StatefulSetConditionType) *apps.StatefulSetCondition {
 	for i := range status.Conditions {
 		c := status.Conditions[i]
 		if c.Type == condType {
@@ -518,7 +518,7 @@ func getAppConditionFromType(status *v2.AppStatus, condType apps.StatefulSetCond
 }
 
 // update status.Conditions with given condition
-func setAppCondition(status *v2.AppStatus, condition apps.StatefulSetCondition) {
+func setAppCondition(status *unicore.AppStatus, condition apps.StatefulSetCondition) {
 	currentCondition := getAppConditionFromType(status, condition.Type)
 	if currentCondition != nil && currentCondition.Status == condition.Status && currentCondition.Reason == condition.Reason {
 		return

@@ -21,7 +21,7 @@ import (
 	"fmt"
 	"net/http"
 
-	unicorev1 "github.com/mcyouyou/unicore/clientset/pkg/generated/clientset/versioned/typed/deployer/v1"
+	unicorev1 "github.com/mcyouyou/unicore/pkg/generated/clientset/versioned/typed/deployer/v1"
 	discovery "k8s.io/client-go/discovery"
 	rest "k8s.io/client-go/rest"
 	flowcontrol "k8s.io/client-go/util/flowcontrol"

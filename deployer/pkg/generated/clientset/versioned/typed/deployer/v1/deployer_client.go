@@ -21,7 +21,7 @@ import (
 	"net/http"
 
 	v1 "github.com/mcyouyou/unicore/api/deployer/v1"
-	"github.com/mcyouyou/unicore/clientset/pkg/generated/clientset/versioned/scheme"
+	"github.com/mcyouyou/unicore/pkg/generated/clientset/versioned/scheme"
 	rest "k8s.io/client-go/rest"
 )
 

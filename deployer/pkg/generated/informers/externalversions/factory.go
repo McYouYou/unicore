@@ -22,9 +22,9 @@ import (
 	sync "sync"
 	time "time"
 
-	versioned "github.com/mcyouyou/unicore/clientset/pkg/generated/clientset/versioned"
-	deployer "github.com/mcyouyou/unicore/clientset/pkg/generated/informers/externalversions/deployer"
-	internalinterfaces "github.com/mcyouyou/unicore/clientset/pkg/generated/informers/externalversions/internalinterfaces"
+	versioned "github.com/mcyouyou/unicore/pkg/generated/clientset/versioned"
+	deployer "github.com/mcyouyou/unicore/pkg/generated/informers/externalversions/deployer"
+	internalinterfaces "github.com/mcyouyou/unicore/pkg/generated/informers/externalversions/internalinterfaces"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	runtime "k8s.io/apimachinery/pkg/runtime"
 	schema "k8s.io/apimachinery/pkg/runtime/schema"

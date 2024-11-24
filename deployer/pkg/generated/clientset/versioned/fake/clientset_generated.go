@@ -18,9 +18,9 @@ limitations under the License.
 package fake
 
 import (
-	clientset "github.com/mcyouyou/unicore/clientset/pkg/generated/clientset/versioned"
-	unicorev1 "github.com/mcyouyou/unicore/clientset/pkg/generated/clientset/versioned/typed/deployer/v1"
-	fakeunicorev1 "github.com/mcyouyou/unicore/clientset/pkg/generated/clientset/versioned/typed/deployer/v1/fake"
+	clientset "github.com/mcyouyou/unicore/pkg/generated/clientset/versioned"
+	unicorev1 "github.com/mcyouyou/unicore/pkg/generated/clientset/versioned/typed/deployer/v1"
+	fakeunicorev1 "github.com/mcyouyou/unicore/pkg/generated/clientset/versioned/typed/deployer/v1/fake"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/watch"
 	"k8s.io/client-go/discovery"
