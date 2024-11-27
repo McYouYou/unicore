@@ -68,8 +68,7 @@ var _ = Describe("App Controller", func() {
 		It("should successfully reconcile the resource", func() {
 			By("Reconciling the created resource")
 			controllerReconciler := &AppReconciler{
-				Client: k8sClient,
-				Scheme: k8sClient.Scheme(),
+				// TODO
 			}
 
 			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{

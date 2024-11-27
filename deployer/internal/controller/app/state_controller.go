@@ -12,6 +12,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/client-go/util/retry"
 	"k8s.io/klog/v2"
@@ -44,11 +45,6 @@ func NewStateController(podController *PodController, recorder record.EventRecor
 }
 
 func (c *StateController) UpdateApp(ctx context.Context, app *unicore.App, pods []*v1.Pod) error {
-	err := c.updateApp(ctx, app, pods)
-
-}
-
-func (c *StateController) updateApp(ctx context.Context, app *unicore.App, pods []*v1.Pod) error {
 	if app == nil {
 		return fmt.Errorf("app is nil")
 	}
@@ -130,9 +126,36 @@ func (c *StateController) updateApp(ctx context.Context, app *unicore.App, pods 
 		return getStatusErr
 	}
 
-	updateStatusErr := c.updateAppStatus()
+	updateStatusErr := c.updateAppStatus(ctx, app, currentStatus)
+	if updateStatusErr == nil {
+		klog.V(4).InfoS("update app status success", "app", klog.KObj(app),
+			"replicas", currentStatus.Replicas,
+			"readyReplicas", currentStatus.ReadyReplicas,
+			"currentReplicas", currentStatus.CurrentReplicas,
+			"updatedReplicas", currentStatus.UpdatedReplicas)
+	}
 
-	return nil
+	err = nil
+	if getStatusErr != nil && updateStatusErr != nil {
+		klog.ErrorS(updateStatusErr, "can not update status", "app", klog.KObj(app))
+		err = getStatusErr
+	} else if getStatusErr != nil {
+		err = getStatusErr
+	} else if updateStatusErr != nil {
+		err = updateStatusErr
+	} else {
+		klog.V(4).InfoS("update status success", "app", klog.KObj(app),
+			"currentRevision", currentStatus.CurrentRevision,
+			"updateRevision", currentStatus.UpdateRevision)
+	}
+	truncateErr := c.truncateHistory(app, pods, revisions, currentRevision, updateRevision)
+	if err != nil {
+		if truncateErr != nil {
+			klog.ErrorS(truncateErr, "can not truncate", "app", klog.KObj(app), "err", truncateErr.Error())
+		}
+		return err
+	}
+	return truncateErr
 }
 
 // core procedure of updating the status and pods
@@ -177,7 +200,7 @@ func (c *StateController) applyUpdate(ctx context.Context,
 	// filter invalid ordinal pod, fill the pod to replica list with their index
 	burstable := app.Spec.PodManagementPolicy == apps.ParallelPodManagement
 	for i := range pods {
-		if _, ord := getPodAppNameAndOrdinal(pods[i]); ord < replicaCnt {
+		if _, ord := GetPodAppNameAndOrdinal(pods[i]); ord < replicaCnt {
 			replicas[ord] = pods[i]
 		} else if ord >= 0 {
 			invalidPods = append(invalidPods, pods[i])
@@ -202,7 +225,7 @@ func (c *StateController) applyUpdate(ctx context.Context,
 		}
 		if !getPodReady(replicas[i]) || replicas[i].DeletionTimestamp != nil {
 			unhealthy++
-			if _, ord := getPodAppNameAndOrdinal(replicas[i]); ord < firstUnhealthyOrdinal {
+			if _, ord := GetPodAppNameAndOrdinal(replicas[i]); ord < firstUnhealthyOrdinal {
 				firstUnhealthyOrdinal = ord
 				firstUnhealthyPod = replicas[i]
 			}
@@ -212,7 +235,7 @@ func (c *StateController) applyUpdate(ctx context.Context,
 	for i := len(invalidPods) - 1; i >= 0; i-- {
 		if !getPodReady(invalidPods[i]) || invalidPods[i].DeletionTimestamp != nil {
 			unhealthy++
-			if _, ord := getPodAppNameAndOrdinal(invalidPods[i]); ord < firstUnhealthyOrdinal {
+			if _, ord := GetPodAppNameAndOrdinal(invalidPods[i]); ord < firstUnhealthyOrdinal {
 				firstUnhealthyOrdinal = ord
 				firstUnhealthyPod = invalidPods[i]
 			}
@@ -299,7 +322,7 @@ func (c *StateController) applyUpdate(ctx context.Context,
 				shouldExit = false
 				if checkInterval > 0 {
 					// check it next reconcile
-					requeue_duration.Push(getAppKey(app), checkInterval)
+					requeue_duration.Push(GetAppKey(app), checkInterval)
 					logger.V(4).Info("waiting for pod to be available after ready for minReadySeconds",
 						"app", klog.KObj(app), "waitTime", checkInterval, "pod", klog.KObj(replicas[i]),
 						"minReadySeconds", minReadySeconds)
@@ -313,7 +336,7 @@ func (c *StateController) applyUpdate(ctx context.Context,
 			logger.V(4).Info("app pod is unavailable, skip this loop", "app", klog.KObj(app), "pod", klog.KObj(replicas[i]))
 			if checkInterval > 0 {
 				// check it next reconcile
-				requeue_duration.Push(getAppKey(app), checkInterval)
+				requeue_duration.Push(GetAppKey(app), checkInterval)
 			}
 			break
 		}
@@ -422,8 +445,68 @@ func (c *StateController) updateAppStatus(ctx context.Context, app *unicore.App,
 	app = app.DeepCopy()
 	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		app.Status = *status
-		err := c.client.UnicoreV1().Apps()
+		_, err := c.client.UnicoreV1().Apps(app.Namespace).UpdateStatus(ctx, app, metav1.UpdateOptions{})
+		if err == nil {
+			return nil
+		}
+		if updated, err := c.appLister.Apps(app.Namespace).Get(app.Name); err == nil {
+			app = updated.DeepCopy()
+		} else {
+			utilruntime.HandleError(fmt.Errorf("err getting updated app %s/%s from lister: %v", app.Namespace, app.Name, err))
+		}
+		return err
 	})
+}
+
+// truncate revisions that are not live(no pod use it, and isn't currentRevision/updateRevision) to maintain the revisionLimit
+func (c *StateController) truncateHistory(app *unicore.App, pods []*v1.Pod, revisions []*apps.ControllerRevision,
+	current, update *apps.ControllerRevision) error {
+	history := make([]*apps.ControllerRevision, 0, len(revisions))
+	live := make(map[string]bool)
+	if current != nil {
+		live[current.Name] = true
+	}
+	if update != nil {
+		live[update.Name] = true
+	}
+	for i := range pods {
+		live[getPodRevision(pods[i])] = true
+	}
+	for i := range revisions {
+		if !live[revisions[i].Name] {
+			history = append(history, revisions[i])
+		}
+	}
+	limit := int(*app.Spec.RevisionHistoryLimit)
+	if len(history) > limit {
+		toDelete := history[:len(history)-limit]
+		for i := range toDelete {
+			if err := c.history.DeleteControllerRevision(toDelete[i]); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func (c *StateController) ListRevisions(app *unicore.App) ([]*apps.ControllerRevision, error) {
+	selector, err := metav1.LabelSelectorAsSelector(app.Spec.Selector)
+	if err != nil {
+		return nil, err
+	}
+	return c.history.ListControllerRevisions(app, selector)
+}
+
+// AdoptOrphanRevisions adding ControllerRef to metadata to adopt the revision
+func (c *StateController) AdoptOrphanRevisions(app *unicore.App, revisions []*apps.ControllerRevision) error {
+	for i := range revisions {
+		adopted, err := c.history.AdoptControllerRevision(app, controllerKind, revisions[i])
+		if err != nil {
+			return err
+		}
+		revisions[i] = adopted
+	}
+	return nil
 }
 
 // check if ObservedGeneration is less or equal to the app's Generation and all fields of status match the app

@@ -146,10 +146,14 @@ func main() {
 		setupLog.Error(err, "unable to create controller", "controller", "Deployer")
 		os.Exit(1)
 	}
-	if err = (&controller.AppReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
-	}).SetupWithManager(mgr); err != nil {
+
+	// set up app reconciler
+	appReconciler, err := controller.NewAppReconciler(mgr)
+	if err != nil {
+		setupLog.Error(err, "unable to new appReconciler")
+		os.Exit(1)
+	}
+	if err = appReconciler.SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "App")
 		os.Exit(1)
 	}
