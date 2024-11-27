@@ -26,6 +26,7 @@ import (
 	lister "github.com/mcyouyou/unicore/pkg/generated/listers/deployer/v1"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	storagev1 "k8s.io/api/storage/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
@@ -36,7 +37,6 @@ import (
 	appslisters "k8s.io/client-go/listers/apps/v1"
 	corelisters "k8s.io/client-go/listers/core/v1"
 	storagelisters "k8s.io/client-go/listers/storage/v1"
-	"k8s.io/client-go/scale/scheme/appsv1beta1"
 	toolscache "k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/klog/v2"
@@ -50,7 +50,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
-var controllerKind = appsv1beta1.SchemeGroupVersion.WithKind("StatefulSet")
+var controllerKind = unicore.SchemeGroupVersion.WithKind("App")
 
 // AppReconciler reconciles a App object
 type AppReconciler struct {
@@ -184,6 +184,7 @@ func (r *AppReconciler) adoptOrphanRevisions(app *unicore.App) error {
 
 // SetupWithManager sets up the controller with the Manager.
 func (r *AppReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	// watch app and pods
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&unicore.App{}).
 		Complete(r)
@@ -203,11 +204,11 @@ func NewAppReconciler(mgr ctrl.Manager) (*AppReconciler, error) {
 	if err != nil {
 		return nil, err
 	}
-	scInformer, err := cache.GetInformerForKind(context.TODO(), corev1.SchemeGroupVersion.WithKind("StorageClass"))
+	scInformer, err := cache.GetInformerForKind(context.TODO(), storagev1.SchemeGroupVersion.WithKind("StorageClass"))
 	if err != nil {
 		return nil, err
 	}
-	revInformer, err := cache.GetInformerForKind(context.TODO(), corev1.SchemeGroupVersion.WithKind("ControllerRevision"))
+	revInformer, err := cache.GetInformerForKind(context.TODO(), appsv1.SchemeGroupVersion.WithKind("ControllerRevision"))
 	if err != nil {
 		return nil, err
 	}

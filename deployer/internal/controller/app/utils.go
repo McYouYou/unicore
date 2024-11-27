@@ -10,6 +10,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/strategicpatch"
 	"k8s.io/client-go/kubernetes/scheme"
+	"k8s.io/klog/v2"
 	"k8s.io/kubernetes/pkg/controller"
 	"strconv"
 	"strings"
@@ -22,7 +23,7 @@ const (
 	LabelPodOrdinal  = "unicore.mcyou.cn/pod-ordinal"
 )
 
-var patchCodec = scheme.Codecs.LegacyCodec(unicore.GroupVersion)
+var patchCodec = scheme.Codecs.LegacyCodec(unicore.SchemeGroupVersion)
 
 // get pvc to-create from app.Spec.VolumeClaimTemplates
 func getPVCFromApp(app *unicore.App, pod *v1.Pod) map[string]*v1.PersistentVolumeClaim {
@@ -125,7 +126,10 @@ func updatePodVolume(app *unicore.App, pod *v1.Pod) {
 func getAppPatch(app *unicore.App) ([]byte, error) {
 	str, err := runtime.Encode(patchCodec, app)
 	if err != nil {
+		klog.Info("err:" + err.Error())
 		return nil, err
+	} else {
+		klog.Info("encode app patch success")
 	}
 	var raw map[string]interface{}
 	err = json.Unmarshal(str, &raw)

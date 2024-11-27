@@ -20,6 +20,7 @@ import (
 	"crypto/tls"
 	"flag"
 	unicorev1 "github.com/mcyouyou/unicore/api/deployer/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"os"
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
@@ -49,6 +50,8 @@ func init() {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
 
 	utilruntime.Must(unicorev1.AddToScheme(scheme))
+	utilruntime.Must(unicorev1.AddToScheme(clientgoscheme.Scheme))
+	scheme.AddUnversionedTypes(metav1.SchemeGroupVersion, &metav1.UpdateOptions{}, &metav1.DeleteOptions{}, &metav1.CreateOptions{})
 	// +kubebuilder:scaffold:scheme
 }
 
