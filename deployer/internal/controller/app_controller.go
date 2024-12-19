@@ -39,6 +39,7 @@ import (
 	storagelisters "k8s.io/client-go/listers/storage/v1"
 	toolscache "k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/tools/record"
+	"k8s.io/client-go/util/retry"
 	"k8s.io/klog/v2"
 	kubecontroller "k8s.io/kubernetes/pkg/controller"
 	"k8s.io/kubernetes/pkg/controller/history"
@@ -51,6 +52,8 @@ import (
 )
 
 var controllerKind = unicore.SchemeGroupVersion.WithKind("App")
+
+const appFinalizerName = "unicore.mcyou.cn/app-finalizer"
 
 // AppReconciler reconciles a App object
 type AppReconciler struct {
@@ -106,6 +109,30 @@ func (r *AppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (res ct
 		return reconcile.Result{}, err
 	}
 
+	// add finalizer so that pods won't be deleted by recycling, but by the reconcile func
+	// finalizer can only be added when the app is not being deleted
+	if app.ObjectMeta.DeletionTimestamp == nil {
+		hasFinalizer := false
+		for _, v := range app.ObjectMeta.Finalizers {
+			if v == appFinalizerName {
+				hasFinalizer = true
+				break
+			}
+		}
+		if !hasFinalizer {
+			app.ObjectMeta.Finalizers = append(app.ObjectMeta.Finalizers, appFinalizerName)
+			err = retry.RetryOnConflict(retry.DefaultRetry, func() error {
+				app, err = r.UnicoreCli.UnicoreV1().Apps(app.Namespace).Update(ctx, app, metav1.UpdateOptions{})
+				if err != nil {
+					return err
+				}
+				klog.Infof("added finalizer for app %v", app.Name)
+				return nil
+			})
+			return reconcile.Result{}, err
+		}
+	}
+
 	selector, err := metav1.LabelSelectorAsSelector(app.Spec.Selector)
 	if err != nil {
 		utilruntime.HandleError(fmt.Errorf("parse selector err:%v", err))
@@ -121,6 +148,61 @@ func (r *AppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (res ct
 	if err != nil {
 		return reconcile.Result{}, err
 	}
+
+	if app.ObjectMeta.DeletionTimestamp != nil {
+		// if app is being deleted and finalizer seen, remove the finalizer after gracefully deleting the pods
+		if app.Spec.Replicas == nil || *app.Spec.Replicas != 0 {
+			// to delete the app, we scale it down to zero
+			zero := int32(0)
+			app.Spec.Replicas = &zero
+			err = retry.RetryOnConflict(retry.DefaultRetry, func() error {
+				app, err = r.UnicoreCli.UnicoreV1().Apps(app.Namespace).Update(ctx, app, metav1.UpdateOptions{})
+				if err != nil {
+					return err
+				}
+				klog.Infof("set replica to 0 for app %v", app.Name)
+				return nil
+			})
+			return reconcile.Result{}, err
+		}
+
+		defer func() {
+			if retErr == nil {
+				if app.Name == "" {
+					return
+				}
+
+				newFinalizers := make([]string, 0)
+				removed := false
+				for _, v := range app.ObjectMeta.Finalizers {
+					if v != appFinalizerName {
+						newFinalizers = append(newFinalizers, v)
+					} else {
+						removed = true
+					}
+				}
+
+				if !removed || len(pods) > 0 {
+					klog.Infof("waiting for app's %d pod to terminate: %v", len(pods), app.Name)
+					return
+				}
+				// we can now remove the finalizer to complete deletion after all pods are gone
+				app.ObjectMeta.Finalizers = newFinalizers
+				err = retry.RetryOnConflict(retry.DefaultRetry, func() error {
+					app, err = r.UnicoreCli.UnicoreV1().Apps(app.Namespace).Update(ctx, app, metav1.UpdateOptions{})
+					if err != nil {
+						return err
+					}
+					klog.Infof("removed finalizer for app %v", app.Name)
+					return nil
+				})
+				if err != nil {
+					klog.ErrorS(err, "failed to remove finalizer for app", "app", app)
+				}
+			}
+		}()
+	}
+
 	if err := r.StateController.UpdateApp(ctx, app, pods); err != nil {
 		return reconcile.Result{RequeueAfter: requeue_duration.Pop(unicoreApp.GetAppKey(app))}, err
 	}
@@ -184,10 +266,9 @@ func (r *AppReconciler) adoptOrphanRevisions(app *unicore.App) error {
 
 // SetupWithManager sets up the controller with the Manager.
 func (r *AppReconciler) SetupWithManager(mgr ctrl.Manager) error {
-	// watch app and pods
+	// watch app changes. use Owns() here to call the Reconcile when its pod changes
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&unicore.App{}).
-		Complete(r)
+		For(&unicore.App{}).Owns(&corev1.Pod{}).Complete(r)
 }
 
 func NewAppReconciler(mgr ctrl.Manager) (*AppReconciler, error) {
@@ -238,7 +319,8 @@ func NewAppReconciler(mgr ctrl.Manager) (*AppReconciler, error) {
 		Lister:        appLister,
 		PodController: podController,
 		StateController: unicoreApp.NewStateController(podController, recorder,
-			history.NewHistory(kubeCli, appslisters.NewControllerRevisionLister(revInformer.(toolscache.SharedIndexInformer).GetIndexer()))),
+			history.NewHistory(kubeCli, appslisters.NewControllerRevisionLister(revInformer.(toolscache.SharedIndexInformer).GetIndexer())),
+			unicoreCli, appLister),
 		UnicoreCli:     unicoreCli,
 		PodLister:      podLister,
 		KubePodControl: kubecontroller.RealPodControl{KubeClient: kubeCli, Recorder: recorder},

@@ -36,11 +36,14 @@ type StateController struct {
 }
 
 // NewStateController new a stateController to manage revision and state
-func NewStateController(podController *PodController, recorder record.EventRecorder, history history.Interface) *StateController {
+func NewStateController(podController *PodController, recorder record.EventRecorder, history history.Interface,
+	client versioned.Interface, appLister lister.AppLister) *StateController {
 	return &StateController{
 		podController: podController,
 		recorder:      recorder,
 		history:       history,
+		client:        client,
+		appLister:     appLister,
 	}
 }
 
@@ -243,12 +246,7 @@ func (c *StateController) applyUpdate(ctx context.Context,
 	}
 
 	if unhealthy > 0 {
-		klog.V(4).Info("App has unhealthy pods", "app", klog.KObj(app), "unhealthyReplicas", unhealthy, "pod", klog.KObj(firstUnhealthyPod))
-	}
-
-	if app.DeletionTimestamp != nil {
-		// app is being deleted
-		return &status, nil
+		klog.V(4).InfoS("App has unhealthy pods", "app", klog.KObj(app), "unhealthyReplicas", unhealthy, "pod", klog.KObj(firstUnhealthyPod))
 	}
 
 	// now we check every pod that should be valid, delete it if failed, create it if not created, and wait until
@@ -375,20 +373,26 @@ func (c *StateController) applyUpdate(ctx context.Context,
 				shouldExit = true
 				logger.V(4).Info("waiting for pod to terminate before scaling down", "app",
 					klog.KObj(app), "pod", klog.KObj(pod))
+				break
 			}
 		}
-		// if it's not the first unhealthy pod, exit until predecessors are ready
-		if burstable && !getPodReady(pod) && pod != firstUnhealthyPod {
+		// not burstable: if it's not the first unhealthy pod, exit until predecessors are ready
+		if !burstable && !getPodReady(pod) && pod != firstUnhealthyPod {
 			logger.V(4).Info("waiting for preceding pod to be ready before scaling down", "app",
 				klog.KObj(app), "pod", klog.KObj(pod), "preceding-pod", klog.KObj(firstUnhealthyPod))
 			shouldExit = true
 			break
 		}
 
-		logger.V(4).Info("pod is terminating for scale down", "app", klog.KObj(app), "pod", klog.KObj(pod))
-		runErr = c.podController.DeleteStatefulPod(ctx, app, replicas[i])
+		klog.Info("pod is terminating for scale down app ", klog.KObj(app), " 's pod ", klog.KObj(pod))
+		runErr = c.podController.DeleteStatefulPod(ctx, app, invalidPods[i])
 		if runErr != nil {
-			c.recorder.Eventf(app, v1.EventTypeWarning, "FailedDelete", "failed to delete pod %s: %v", replicas[i].Name, runErr)
+			c.recorder.Eventf(app, v1.EventTypeWarning, "FailedDelete", "failed to delete pod %s: %v", invalidPods[i].Name, runErr)
+			shouldExit = true
+			break
+		}
+
+		if !burstable {
 			shouldExit = true
 			break
 		}
@@ -404,13 +408,18 @@ func (c *StateController) applyUpdate(ctx context.Context,
 		return &status, nil
 	}
 
+	if app.DeletionTimestamp != nil {
+		// app is being deleted
+		return &status, nil
+	}
+
 	// for rollingUpdate strategy, we terminate the pod with the largest ordinal that does not match the updateRevision
 	updateMin := 0
 	if app.Spec.UpdateStrategy.RollingUpdate != nil {
 		// update can only be done for pod [partition:]
 		updateMin = int(*app.Spec.UpdateStrategy.RollingUpdate.Partition)
 	}
-	for target := len(replicas); target >= updateMin; target-- {
+	for target := len(replicas) - 1; target >= updateMin; target-- {
 		if getPodRevision(replicas[target]) != updateRevision.Name && replicas[target].DeletionTimestamp == nil {
 			logger.V(4).Info("terminating pod for update", "app", klog.KObj(app), "pod", klog.KObj(replicas[target]))
 			if err := c.podController.DeleteStatefulPod(ctx, app, replicas[target]); err != nil {
@@ -476,6 +485,11 @@ func (c *StateController) truncateHistory(app *unicore.App, pods []*v1.Pod, revi
 		if !live[revisions[i].Name] {
 			history = append(history, revisions[i])
 		}
+	}
+
+	if app.Spec.RevisionHistoryLimit == nil {
+		defaultRevisionHistoryLimit := int32(10)
+		app.Spec.RevisionHistoryLimit = &defaultRevisionHistoryLimit
 	}
 	limit := int(*app.Spec.RevisionHistoryLimit)
 	if len(history) > limit {

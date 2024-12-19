@@ -1,11 +1,11 @@
-apiVersion: unicore.mcyou.cn/v1
-kind: App
+apiVersion: apps/v1
+kind: StatefulSet
 metadata:
   labels:
     app.kubernetes.io/name: deployer
     app.kubernetes.io/managed-by: kustomize
     app: nginx
-  name: app-sample
+  name: sts-sample
 spec:
   replicas: 3
   selector:

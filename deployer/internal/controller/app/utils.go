@@ -29,12 +29,13 @@ var patchCodec = scheme.Codecs.LegacyCodec(unicore.SchemeGroupVersion)
 func getPVCFromApp(app *unicore.App, pod *v1.Pod) map[string]*v1.PersistentVolumeClaim {
 	_, ordinal := GetPodAppNameAndOrdinal(pod)
 	pvcs := make(map[string]*v1.PersistentVolumeClaim, len(app.Spec.VolumeClaimTemplates))
-	for _, pvc := range app.Spec.VolumeClaimTemplates {
+	for i := range app.Spec.VolumeClaimTemplates {
 		// set pvc name as pvc-app-ordinal
-		pvc.Name = getPVCOutName(app, &pvc, ordinal)
-		pvc.Namespace = app.Namespace
-		pvc.Labels = app.Spec.Selector.MatchLabels
-		pvcs[pvc.Name] = &pvc
+		claim := app.Spec.VolumeClaimTemplates[i]
+		claim.Name = getPVCOutName(app, &claim, ordinal)
+		claim.Namespace = app.Namespace
+		claim.Labels = app.Spec.Selector.MatchLabels
+		pvcs[app.Spec.VolumeClaimTemplates[i].Name] = &claim
 	}
 	return pvcs
 }
@@ -42,11 +43,12 @@ func getPVCFromApp(app *unicore.App, pod *v1.Pod) map[string]*v1.PersistentVolum
 // get pod's app name and the pod's ordinal from a real pod
 func GetPodAppNameAndOrdinal(pod *v1.Pod) (string, int) {
 	parts := strings.Split(pod.Name, "-")
-	if len(parts) != 2 {
+	if len(parts) < 2 {
 		return "", -1
 	}
-	if i, err := strconv.Atoi(parts[1]); err == nil {
-		return parts[0], i
+	owner := strings.Join(parts[:len(parts)-1], "-")
+	if i, err := strconv.Atoi(parts[len(parts)-1]); err == nil {
+		return owner, i
 	}
 	return "", -1
 }
@@ -128,8 +130,6 @@ func getAppPatch(app *unicore.App) ([]byte, error) {
 	if err != nil {
 		klog.Info("err:" + err.Error())
 		return nil, err
-	} else {
-		klog.Info("encode app patch success")
 	}
 	var raw map[string]interface{}
 	err = json.Unmarshal(str, &raw)

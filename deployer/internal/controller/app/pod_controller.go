@@ -34,6 +34,7 @@ func NewPodController(client clientset.Interface, podLister listerv1.PodLister, 
 	}
 }
 
+// CreateStatefulPod create the pod with its pvc
 func (c *PodController) CreateStatefulPod(ctx context.Context, app *unicore.App, pod *v1.Pod) error {
 	// create pvc before creating pod
 	err := c.createPVC(app, pod)
