@@ -55,7 +55,7 @@ func GetPodAppNameAndOrdinal(pod *v1.Pod) (string, int) {
 
 // get pvc's to-create name for given ordinal
 func getPVCOutName(app *unicore.App, pvc *v1.PersistentVolumeClaim, ordinal int) string {
-	return fmt.Sprintf("%s-%s-%d", app.Name, pvc.Name, ordinal)
+	return fmt.Sprintf("%s-%s-%d", pvc.Name, app.Name, ordinal)
 }
 
 func getPodOutName(app *unicore.App, ordinal int) string {

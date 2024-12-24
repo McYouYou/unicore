@@ -133,6 +133,7 @@ spec:
                         type: boolean
                     type: object
                   type:
+                    default: RollingUpdate
                     description: |-
                       Type indicates the type of the AppUpdateStrategy, which is as same as the sts.
                       Default is RollingUpdate.

@@ -162,6 +162,7 @@ type AppUpdateStrategy struct {
 	// Type indicates the type of the AppUpdateStrategy, which is as same as the sts.
 	// Default is RollingUpdate.
 	// +optional
+	// +kubebuilder:default="RollingUpdate"
 	Type apps.StatefulSetUpdateStrategyType `json:"type,omitempty"`
 	// RollingUpdate is used to communicate parameters when Type is RollingUpdateStatefulSetStrategyType.
 	// +optional

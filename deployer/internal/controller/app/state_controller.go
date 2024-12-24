@@ -12,6 +12,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/client-go/util/retry"
@@ -415,10 +416,34 @@ func (c *StateController) applyUpdate(ctx context.Context,
 
 	// for rollingUpdate strategy, we terminate the pod with the largest ordinal that does not match the updateRevision
 	updateMin := 0
-	if app.Spec.UpdateStrategy.RollingUpdate != nil {
-		// update can only be done for pod [partition:]
-		updateMin = int(*app.Spec.UpdateStrategy.RollingUpdate.Partition)
+
+	if app.Spec.UpdateStrategy.RollingUpdate == nil {
+		zero := int32(0)
+		app.Spec.UpdateStrategy.RollingUpdate = &unicore.RollingUpdateAppStrategy{
+			Partition:             &zero,
+			MaxUnavailable:        &intstr.IntOrString{Type: intstr.Int, IntVal: 1},
+			PodUpdatePolicy:       unicore.RecreatePodUpdateStrategyType,
+			Paused:                false,
+			UnorderedUpdate:       false,
+			InPlaceUpdateStrategy: nil,
+			MinReadySeconds:       &zero,
+		}
+		err = retry.RetryOnConflict(retry.DefaultRetry, func() error {
+			app, err = c.client.UnicoreV1().Apps(app.Namespace).Update(ctx, app, metav1.UpdateOptions{})
+			if err != nil {
+				return err
+			}
+			klog.Infof("added default rollingUpdate strategy to app %v", app.Name)
+			return nil
+		})
+		if err != nil {
+			klog.Infof("failed adding default rollingUpdate strategy to app %v: %v", app.Name, err)
+		}
+		return &status, nil
 	}
+
+	// update can only be done for pod [partition:]
+	updateMin = int(*app.Spec.UpdateStrategy.RollingUpdate.Partition)
 	for target := len(replicas) - 1; target >= updateMin; target-- {
 		if getPodRevision(replicas[target]) != updateRevision.Name && replicas[target].DeletionTimestamp == nil {
 			logger.V(4).Info("terminating pod for update", "app", klog.KObj(app), "pod", klog.KObj(replicas[target]))
@@ -432,7 +457,7 @@ func (c *StateController) applyUpdate(ctx context.Context,
 		}
 
 		// wait for unhealthy pods to update
-		if !(getPodReady(replicas[target]) && replicas[target].DeletionTimestamp != nil) {
+		if !(getPodReady(replicas[target]) || replicas[target].DeletionTimestamp != nil) {
 			logger.V(4).Info("waiting for pod to update", "app", klog.KObj(app), "pod", klog.KObj(replicas[target]))
 			return &status, nil
 		}

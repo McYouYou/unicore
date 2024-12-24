@@ -18,7 +18,8 @@ spec:
     spec:
       containers:
         - name: nginx
-          image: registry.cn-shenzhen.aliyuncs.com/amgs/nginx:latest
+          image: nginx
+          imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 80
           volumeMounts:
