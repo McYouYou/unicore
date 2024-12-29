@@ -175,11 +175,11 @@ func (c *StateController) applyUpdate(ctx context.Context,
 		return app.Status.DeepCopy(), err
 	}
 
-	currentSet, err := ApplyRevision(app, currentRevision)
+	currentApp, err := ApplyRevision(app, currentRevision)
 	if err != nil {
 		return app.Status.DeepCopy(), err
 	}
-	updateSet, err := ApplyRevision(app, updateRevision)
+	updateApp, err := ApplyRevision(app, updateRevision)
 	if err != nil {
 		return app.Status.DeepCopy(), err
 	}
@@ -215,7 +215,7 @@ func (c *StateController) applyUpdate(ctx context.Context,
 	// this is where the newer version pod is created
 	for i := 0; i < replicaCnt; i++ {
 		if replicas[i] == nil {
-			replicas[i] = newVersionedPodForApp(currentSet, updateSet, currentRevision.Name, updateRevision.Name,
+			replicas[i] = newVersionedPodForApp(currentApp, updateApp, currentRevision.Name, updateRevision.Name,
 				i, replicas)
 		}
 	}
@@ -254,7 +254,7 @@ func (c *StateController) applyUpdate(ctx context.Context,
 	// 	all pods are there and match their identities.
 	// note that we use pods.Update() to match pod's identity with the app, only editing its labels and annotations,
 	// 	not its revision.
-	shouldExit := true
+	allAvailable := true
 	logger := klog.FromContext(ctx)
 	var runErr error
 	for i := range replicas {
@@ -263,7 +263,7 @@ func (c *StateController) applyUpdate(ctx context.Context,
 		}
 		// pods in these two phase should be restarted
 		if replicas[i].Status.Phase == v1.PodFailed || replicas[i].Status.Phase == v1.PodSucceeded {
-			shouldExit = false
+			allAvailable = false
 			if replicas[i].DeletionTimestamp == nil {
 				if err := c.podController.DeleteStatefulPod(ctx, app, replicas[i]); err != nil {
 					c.recorder.Eventf(app, v1.EventTypeWarning, "FailedDelete", "failed to delete pod %s: %v", replicas[i].Name, err)
@@ -275,7 +275,7 @@ func (c *StateController) applyUpdate(ctx context.Context,
 
 		// if pod not created, create one
 		if replicas[i].Status.Phase == "" {
-			shouldExit = false
+			allAvailable = false
 			if err := c.podController.CreateStatefulPod(ctx, app, replicas[i]); err != nil {
 				condition := apps.StatefulSetCondition{
 					Type:    unicore.ConditionFailCreatePod,
@@ -284,16 +284,17 @@ func (c *StateController) applyUpdate(ctx context.Context,
 				}
 				setAppCondition(&status, condition)
 				runErr = err
-				break
 			}
 			// if burstable not allowed, break to make a monotonic creation
 			if !burstable {
 				break
+			} else {
+				continue
 			}
 		}
 
 		if replicas[i].Status.Phase == v1.PodPending {
-			shouldExit = false
+			allAvailable = false
 			logger.V(4).Info("App is creating pvc for pending pod", "app", klog.KObj(app), klog.KObj(replicas[i]))
 			if err := c.podController.createPVC(app, replicas[i]); err != nil {
 				runErr = err
@@ -304,7 +305,7 @@ func (c *StateController) applyUpdate(ctx context.Context,
 		// no bursting: for terminating pod: wait until graceful exit
 		if replicas[i].DeletionTimestamp != nil && !burstable {
 			logger.V(4).Info("App is waiting for pod to terminate", "app", klog.KObj(app), "pod", klog.KObj(replicas[i]))
-			shouldExit = false
+			allAvailable = false
 			break
 		}
 		if replicas[i].DeletionTimestamp != nil && burstable {
@@ -318,7 +319,7 @@ func (c *StateController) applyUpdate(ctx context.Context,
 		if !burstable {
 			// not burstable and a pod is unavailable, preceding procedures can't be done
 			if !isAvailable {
-				shouldExit = false
+				allAvailable = false
 				if checkInterval > 0 {
 					// check it next reconcile
 					requeue_duration.Push(GetAppKey(app), checkInterval)
@@ -358,14 +359,14 @@ func (c *StateController) applyUpdate(ctx context.Context,
 		}
 	}
 
-	if runErr != nil || !shouldExit {
+	if runErr != nil || !allAvailable {
 		updateStatus(&status, minReadySeconds, currentRevision, updateRevision, replicas, invalidPods)
 		return &status, runErr
 	}
 
 	// at this point, if not burstable, all pods of spec.Replicas are available.
 	// then we can make deletion of invalid pods in a decreasing order, if all predecessors are ready
-	shouldExit = false
+	shouldExit := false
 	for i := range invalidPods {
 		pod := invalidPods[i]
 		if pod.DeletionTimestamp != nil {
@@ -417,7 +418,7 @@ func (c *StateController) applyUpdate(ctx context.Context,
 	// for rollingUpdate strategy, we terminate the pod with the largest ordinal that does not match the updateRevision
 	updateMin := 0
 
-	if app.Spec.UpdateStrategy.RollingUpdate == nil {
+	if app.Spec.UpdateStrategy.Type == apps.RollingUpdateStatefulSetStrategyType && app.Spec.UpdateStrategy.RollingUpdate == nil {
 		zero := int32(0)
 		app.Spec.UpdateStrategy.RollingUpdate = &unicore.RollingUpdateAppStrategy{
 			Partition:             &zero,

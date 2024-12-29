@@ -13,6 +13,7 @@ import (
 	storagelisterv1 "k8s.io/client-go/listers/storage/v1"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/client-go/util/retry"
+	"k8s.io/klog/v2"
 )
 
 type PodController struct {
@@ -96,7 +97,14 @@ func (c *PodController) UpdateStatefulPod(ctx context.Context, app *unicore.App,
 }
 
 func (c *PodController) DeleteStatefulPod(ctx context.Context, app *unicore.App, pod *v1.Pod) error {
+	if pod.DeletionTimestamp != nil {
+		return nil
+	}
 	err := c.client.CoreV1().Pods(pod.Namespace).Delete(ctx, pod.Name, metav1.DeleteOptions{})
+	if errors.IsNotFound(err) {
+		klog.Infof("pod %s is already deleted", pod.Name)
+		return nil
+	}
 	c.recordPodEvent("delete", app, pod, err)
 	return err
 }
