@@ -1,0 +1,51 @@
+apiVersion: unicore.mcyou.cn/v1
+kind: App
+metadata:
+  labels:
+    app.kubernetes.io/name: deployer
+    app.kubernetes.io/managed-by: kustomize
+    app: nginx
+  name: app-sample
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: nginx
+  updateStrategy:
+    rollingUpdate:
+      podUpdatePolicy: InPlaceIfPossible
+  template:
+    metadata:
+      labels:
+        app: nginx
+    spec:
+      initContainers:
+        - name: init-sleep
+          image: busybox
+          imagePullPolicy: IfNotPresent
+          command:
+            - /bin/sh
+            - -c
+            - |
+              echo "Initializing..."
+              sleep 10
+              echo "Initialization completed."
+      containers:
+        - name: main-container
+          image: busybox
+          command:
+            - /bin/sh
+            - -c
+            - |
+              echo "Main application running."
+              tail -f /dev/null
+          imagePullPolicy: IfNotPresent
+  volumeClaimTemplates:
+    - metadata:
+        name: nginx-data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        storageClassName: standard
+        resources:
+          requests:
+            storage: 1Gi

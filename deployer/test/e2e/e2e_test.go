@@ -24,7 +24,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"mcyou.cn/unicore/deployer/test/utils"
+	"github.com/mcyouyou/unicore/test/utils"
 )
 
 const namespace = "deployer-system"

@@ -1,0 +1,293 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.15.0
+  name: apps.unicore.mcyou.cn
+spec:
+  group: unicore.mcyou.cn
+  names:
+    kind: App
+    listKind: AppList
+    plural: apps
+    singular: app
+  scope: Namespaced
+  versions:
+  - name: v1
+    schema:
+      openAPIV3Schema:
+        description: App is the Schema for the apps API
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: AppSpec defines the desired state of App
+            properties:
+              podManagementPolicy:
+                description: |-
+                  same as sts. if parallel strategy is set, pod will be managed ignoring the ordinal. if orderedReady is set,
+                  pod will be scale/update considering ordinal and wait for former pod's ready status
+                type: string
+              replicas:
+                description: desired number of pods, defaults to 1
+                format: int32
+                type: integer
+              revisionHistoryLimit:
+                description: the maximum of history records of the template that app
+                  controller keeps
+                format: int32
+                type: integer
+              selector:
+                description: selects the label that App Controller managed, should
+                  match Template
+                x-kubernetes-preserve-unknown-fields: true
+              serviceName:
+                description: serviceName that app controller to create to manage the
+                  pods
+                type: string
+              template:
+                description: the template of the App's pod to create
+                x-kubernetes-preserve-unknown-fields: true
+              updateStrategy:
+                description: |-
+                  updateStrategy indicates the AppUpdateStrategy that will be
+                  employed to update Pods in the App when a revision is made to
+                  Template. Behave the same as sts.
+                properties:
+                  rollingUpdate:
+                    description: RollingUpdate is used to communicate parameters when
+                      Type is RollingUpdateStatefulSetStrategyType.
+                    properties:
+                      inPlaceUpdateStrategy:
+                        description: InPlaceUpdateStrategy contains strategies for
+                          in-place update.
+                        properties:
+                          gracePeriodSeconds:
+                            description: |-
+                              GracePeriodSeconds is the timespan between set Pod status to not-ready and update images in Pod spec
+                              when in-place update a Pod.
+                            format: int32
+                            type: integer
+                        type: object
+                      maxUnavailable:
+                        anyOf:
+                        - type: integer
+                        - type: string
+                        description: |-
+                          The maximum number of pods that can be unavailable during the update.
+                          Value can be an absolute number (ex: 5) or a percentage of desired pods (ex: 10%).
+                          Absolute number is calculated from percentage by rounding down.
+                          Also, maxUnavailable can just be allowed to work with Parallel podManagementPolicy.
+                          Defaults to 1.
+                        x-kubernetes-int-or-string: true
+                      minReadySeconds:
+                        description: |-
+                          MinReadySeconds indicates how long will the pod be considered ready after it's updated.
+                          MinReadySeconds works with both OrderedReady and Parallel podManagementPolicy.
+                          It affects the pod scale up speed when the podManagementPolicy is set to be OrderedReady.
+                          Combined with MaxUnavailable, it affects the pod update speed regardless of podManagementPolicy.
+                          Default value is 0, max is 300.
+                        format: int32
+                        type: integer
+                      partition:
+                        description: |-
+                          Partition indicates the ordinal at which the App's pods should be partitioned by default,
+                          which means pod whose ordinal >= Partition should be updated
+                          But if unorderedUpdate has been set:
+                            - Partition indicates the number of pods with non-updated revisions when rolling update.
+                            - It means controller will update $(replicas - partition) number of pod.
+                          Default value is 0.
+                        format: int32
+                        type: integer
+                      paused:
+                        description: |-
+                          Paused indicates that the StatefulSet is paused.
+                          Default value is false
+                        type: boolean
+                      podUpdatePolicy:
+                        description: |-
+                          PodUpdatePolicy indicates how pods should be updated
+                          Default value is "ReCreate"
+                        type: string
+                      unorderedUpdate:
+                        description: |-
+                          UnorderedUpdate contains strategies for non-ordered update.
+                          If it is not nil, pods will be updated with non-ordered sequence.
+                          Noted that UnorderedUpdate can only be allowed to work with Parallel podManagementPolicy
+                        type: boolean
+                    type: object
+                  type:
+                    default: RollingUpdate
+                    description: |-
+                      Type indicates the type of the AppUpdateStrategy, which is as same as the sts.
+                      Default is RollingUpdate.
+                    type: string
+                type: object
+              volumeClaimTemplates:
+                description: PVC's template, at least one should match Template's
+                  volume mnt
+                x-kubernetes-preserve-unknown-fields: true
+            required:
+            - selector
+            - template
+            type: object
+          status:
+            description: AppStatus defines the observed state of App
+            properties:
+              availableReplicas:
+                description: |-
+                  AvailableReplicas is the number of Pods created by the App controller that have been ready for
+                  minReadySeconds.
+                format: int32
+                type: integer
+              collisionCount:
+                description: used to ensure a unique revision hash
+                format: int32
+                type: integer
+              conditions:
+                description: Represents the latest available observations of a statefulset's
+                  current state.
+                items:
+                  description: StatefulSetCondition describes the state of a statefulset
+                    at a certain point.
+                  properties:
+                    lastTransitionTime:
+                      description: Last time the condition transitioned from one status
+                        to another.
+                      format: date-time
+                      type: string
+                    message:
+                      description: A human readable message indicating details about
+                        the transition.
+                      type: string
+                    reason:
+                      description: The reason for the condition's last transition.
+                      type: string
+                    status:
+                      description: Status of the condition, one of True, False, Unknown.
+                      type: string
+                    type:
+                      description: Type of statefulset condition.
+                      type: string
+                  required:
+                  - status
+                  - type
+                  type: object
+                type: array
+              currentReplicas:
+                description: |-
+                  currentReplicas is the number of Pods created by the App controller from the App version
+                  indicated by currentRevision.
+                format: int32
+                type: integer
+              currentRevision:
+                description: |-
+                  currentRevision, if not empty, indicates the version of the App used to generate Pods in the
+                  sequence [0,currentReplicas).
+                type: string
+              labelSelector:
+                description: LabelSelector is label selectors for query over pods
+                  that should match the replica count used by HPA.
+                type: string
+              observedGeneration:
+                description: specify the current version of app's spec, comparing
+                  to object meta to check if update needed
+                format: int64
+                type: integer
+              readyReplicas:
+                description: readyReplicas is the number of Pods created by the App
+                  controller that have a Ready Condition.
+                format: int32
+                type: integer
+              replicas:
+                description: replicas is the number of Pods created by the App controller.
+                format: int32
+                type: integer
+              updatedAvailableReplicas:
+                description: |-
+                  updatedAvailableReplicas is the number of updated Pods created by the StatefulSet controller that have a Ready condition
+                  for atleast minReadySeconds.
+                format: int32
+                type: integer
+              updatedReadyReplicas:
+                description: updatedReadyReplicas is the number of updated Pods created
+                  by the StatefulSet controller that have a Ready Condition.
+                format: int32
+                type: integer
+              updatingReplicas:
+                description: |-
+                  updatedReplicas is the number of Pods created by the App controller from the App version
+                  indicated by updateRevision.
+                format: int32
+                type: integer
+              updatingRevision:
+                description: |-
+                  updateRevision, if not empty, indicates the version of the App used to generate Pods in the sequence
+                  [replicas-updatedReplicas,replicas)
+                type: string
+              volumeClaims:
+                description: |-
+                  VolumeClaims represents the status of compatibility between existing PVCs
+                  and their respective templates. It tracks whether the PersistentVolumeClaims have been updated
+                  to match any changes made to the volumeClaimTemplates, ensuring synchronization
+                  between the defined templates and the actual PersistentVolumeClaims in use.
+                items:
+                  description: |-
+                    VolumeClaimStatus describes the status of a volume claim template.
+                    It provides details about the compatibility and readiness of the volume claim.
+                  properties:
+                    compatibleReadyReplicas:
+                      description: |-
+                        CompatibleReadyReplicas is the number of replicas that are both ready and compatible with the volume claim.
+                        It highlights that these replicas are not only compatible but also ready to be put into service immediately.
+                        Compatibility is determined by whether the pvc spec storage requests are greater than or equal to the template spec storage requests
+                        The "ready" status is determined by whether the PVC status capacity is greater than or equal to the PVC spec storage requests.
+                      format: int32
+                      type: integer
+                    compatibleReplicas:
+                      description: |-
+                        CompatibleReplicas is the number of replicas currently compatible with the volume claim.
+                        It indicates how many replicas can function properly, being compatible with this volume claim.
+                        Compatibility is determined by whether the PVC spec storage requests are greater than or equal to the template spec storage requests
+                      format: int32
+                      type: integer
+                    volumeClaimName:
+                      description: |-
+                        VolumeClaimName is the name of the volume claim.
+                        This is a unique identifier used to reference a specific volume claim.
+                      type: string
+                  required:
+                  - compatibleReadyReplicas
+                  - compatibleReplicas
+                  - volumeClaimName
+                  type: object
+                type: array
+            required:
+            - availableReplicas
+            - currentReplicas
+            - currentRevision
+            - readyReplicas
+            - replicas
+            - updatingReplicas
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}
