@@ -5,7 +5,7 @@ import (
 	"time"
 )
 
-// used to store a duration for the next reconcile
+// used to store a duration for the next reconcile call
 var store sync.Map
 
 func Push(key string, duration time.Duration) {
@@ -21,6 +21,7 @@ func Push(key string, duration time.Duration) {
 func Pop(key string) time.Duration {
 	value, ok := store.Load(key)
 	if ok {
+		store.Delete(key)
 		return value.(time.Duration)
 	}
 	return 0

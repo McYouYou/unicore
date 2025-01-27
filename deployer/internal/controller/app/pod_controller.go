@@ -43,6 +43,8 @@ func (c *PodController) CreateStatefulPod(ctx context.Context, app *unicore.App,
 		c.recordPodEvent("create", app, pod, err)
 		return err
 	}
+	// add readinessGate for in-place update
+	InjectReadinessGate(pod)
 	_, err = c.client.CoreV1().Pods(pod.Namespace).Create(ctx, pod, metav1.CreateOptions{})
 	if errors.IsAlreadyExists(err) {
 		// this pod of its name has been created

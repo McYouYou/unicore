@@ -1,0 +1,41 @@
+apiVersion: unicore.mcyou.cn/v1
+kind: App
+metadata:
+  labels:
+    app.kubernetes.io/name: deployer
+    app.kubernetes.io/managed-by: kustomize
+    app: nginx
+  name: app-sample
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: nginx
+  updateStrategy:
+    rollingUpdate:
+      podUpdatePolicy: InPlaceIfPossible
+      inPlaceUpdateStrategy:
+        gracePeriodSeconds: 10
+  template:
+    metadata:
+      labels:
+        app: nginx
+    spec:
+      containers:
+        - name: nginx
+          image: nginx
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 80
+          volumeMounts:
+            - name: nginx-data
+              mountPath: /usr/share/nginx/html
+  volumeClaimTemplates:
+    - metadata:
+        name: nginx-data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        storageClassName: standard
+        resources:
+          requests:
+            storage: 1Gi

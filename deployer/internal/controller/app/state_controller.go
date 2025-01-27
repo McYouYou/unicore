@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	unicore "github.com/mcyouyou/unicore/api/deployer/v1"
+	"github.com/mcyouyou/unicore/api/deployer/v1/inplace"
 	"github.com/mcyouyou/unicore/internal/controller/requeue_duration"
 	"github.com/mcyouyou/unicore/pkg/generated/clientset/versioned"
 	lister "github.com/mcyouyou/unicore/pkg/generated/listers/deployer/v1"
@@ -21,6 +22,7 @@ import (
 	"k8s.io/utils/ptr"
 	"math"
 	"sort"
+	"time"
 )
 
 var (
@@ -194,6 +196,27 @@ func (c *StateController) applyUpdate(ctx context.Context,
 	// update App.Status
 	updateStatus(&status, minReadySeconds, currentRevision, updateRevision, pods)
 
+	// set default rollingUpdateStrategy if needed
+	if app.Spec.UpdateStrategy.Type == apps.RollingUpdateStatefulSetStrategyType {
+		updateNeeded, newRollingUpdate := setDefaultRollingUpdateStrategy(app)
+		if updateNeeded {
+			err = retry.RetryOnConflict(retry.DefaultRetry, func() error {
+				clone := app.DeepCopy()
+				clone.Spec.UpdateStrategy.RollingUpdate = newRollingUpdate
+				app, err = c.client.UnicoreV1().Apps(clone.Namespace).Update(ctx, clone, metav1.UpdateOptions{})
+				if err != nil {
+					return err
+				}
+				klog.Infof("added default rollingUpdate strategy to app %v", app.Name)
+				return nil
+			})
+			if err != nil {
+				klog.Infof("failed adding default rollingUpdate strategy to app %v: %v", app.Name, err)
+			}
+			return &status, nil
+		}
+	}
+
 	// the new replica list to maintain
 	replicaCnt := int(*app.Spec.Replicas)
 	replicas := make([]*v1.Pod, replicaCnt)
@@ -201,8 +224,8 @@ func (c *StateController) applyUpdate(ctx context.Context,
 	var firstUnhealthyPod *v1.Pod
 	invalidPods := make([]*v1.Pod, 0)
 
-	// filter invalid ordinal pod, fill the pod to replica list with their index
 	burstable := app.Spec.PodManagementPolicy == apps.ParallelPodManagement
+	// filter invalid ordinal pod, fill the pod to replica list with their index
 	for i := range pods {
 		if _, ord := GetPodAppNameAndOrdinal(pods[i]); ord < replicaCnt {
 			replicas[ord] = pods[i]
@@ -333,7 +356,7 @@ func (c *StateController) applyUpdate(ctx context.Context,
 			}
 		} else if !isAvailable {
 			// burstable but unavailable
-			logger.V(4).Info("app pod is unavailable, skip this loop", "app", klog.KObj(app), "pod", klog.KObj(replicas[i]))
+			klog.Info("app pod is unavailable, skip this loop", "app", klog.KObj(app), "pod", klog.KObj(replicas[i]))
 			if checkInterval > 0 {
 				// check it next reconcile
 				requeue_duration.Push(GetAppKey(app), checkInterval)
@@ -373,7 +396,7 @@ func (c *StateController) applyUpdate(ctx context.Context,
 			if !burstable {
 				// if not burstable, exit and wait until pod terminated
 				shouldExit = true
-				logger.V(4).Info("waiting for pod to terminate before scaling down", "app",
+				klog.Info("waiting for pod to terminate before scaling down", "app",
 					klog.KObj(app), "pod", klog.KObj(pod))
 				break
 			}
@@ -418,36 +441,31 @@ func (c *StateController) applyUpdate(ctx context.Context,
 	// for rollingUpdate strategy, we terminate the pod with the largest ordinal that does not match the updateRevision
 	updateMin := 0
 
-	if app.Spec.UpdateStrategy.Type == apps.RollingUpdateStatefulSetStrategyType && app.Spec.UpdateStrategy.RollingUpdate == nil {
-		zero := int32(0)
-		app.Spec.UpdateStrategy.RollingUpdate = &unicore.RollingUpdateAppStrategy{
-			Partition:             &zero,
-			MaxUnavailable:        &intstr.IntOrString{Type: intstr.Int, IntVal: 1},
-			PodUpdatePolicy:       unicore.RecreatePodUpdateStrategyType,
-			Paused:                false,
-			UnorderedUpdate:       false,
-			InPlaceUpdateStrategy: nil,
-			MinReadySeconds:       &zero,
-		}
-		err = retry.RetryOnConflict(retry.DefaultRetry, func() error {
-			app, err = c.client.UnicoreV1().Apps(app.Namespace).Update(ctx, app, metav1.UpdateOptions{})
-			if err != nil {
-				return err
-			}
-			klog.Infof("added default rollingUpdate strategy to app %v", app.Name)
-			return nil
-		})
-		if err != nil {
-			klog.Infof("failed adding default rollingUpdate strategy to app %v: %v", app.Name, err)
-		}
-		return &status, nil
-	}
-
 	// update can only be done for pod [partition:]
 	updateMin = int(*app.Spec.UpdateStrategy.RollingUpdate.Partition)
 	for target := len(replicas) - 1; target >= updateMin; target-- {
 		if getPodRevision(replicas[target]) != updateRevision.Name && replicas[target].DeletionTimestamp == nil {
-			logger.V(4).Info("terminating pod for update", "app", klog.KObj(app), "pod", klog.KObj(replicas[target]))
+			if app.Spec.UpdateStrategy.RollingUpdate != nil &&
+				app.Spec.UpdateStrategy.RollingUpdate.PodUpdatePolicy == unicore.InPlaceIfPossiblePodUpdateStrategyType {
+				// try in-place update
+				err, waitSeconds := c.InPlaceUpdatePod(app, replicas[target], updateRevision, revisions)
+				if err == nil {
+					if waitSeconds > 0 {
+						requeue_duration.Push(GetAppKey(app), time.Duration(waitSeconds)*time.Second)
+						klog.InfoS("started in-place update, waiting for grace seconds", "app",
+							klog.KObj(app), "pod", klog.KObj(replicas[target]), "graceSeconds", waitSeconds)
+					} else {
+						klog.InfoS("started in-place update", "app",
+							klog.KObj(app), "pod", klog.KObj(replicas[target]))
+					}
+					return &status, err
+				}
+				klog.InfoS("can't use in-place update, falling back to ReCreate", "err",
+					err, "app", klog.KObj(app), "pod", klog.KObj(replicas[target]))
+			}
+
+			// normal ReCreate update
+			klog.InfoS("terminating pod for update", "app", klog.KObj(app), "pod", klog.KObj(replicas[target]))
 			if err := c.podController.DeleteStatefulPod(ctx, app, replicas[target]); err != nil {
 				if !errors.IsNotFound(err) {
 					return &status, err
@@ -457,9 +475,42 @@ func (c *StateController) applyUpdate(ctx context.Context,
 			return &status, err
 		}
 
+		// check whether in-place update is done, if in-place update is set
+		if replicas[target].Annotations[inplace.StatusKey] != "" {
+			inPlaceCondExist := false
+			for _, condition := range replicas[target].Status.Conditions {
+				if condition.Type == InPlaceUpdateReady && condition.Status != v1.ConditionTrue {
+					inPlaceCondExist = true
+					break
+				}
+			}
+			if inPlaceCondExist {
+				done, err := IsInPlaceUpdateDone(replicas[target])
+				if err != nil {
+					klog.InfoS("get in-place update status err", "err", err, "app",
+						klog.KObj(app), "pod", klog.KObj(replicas[target]))
+					return &status, err
+				}
+				if !done {
+					klog.InfoS("waiting for in-place update container to rebuild", "app",
+						klog.KObj(app), "pod", klog.KObj(replicas[target]))
+					return &status, err
+				}
+
+				klog.InfoS("in-place update for pod finished, removing condition", "app",
+					klog.KObj(app), "pod", klog.KObj(replicas[target]))
+
+				err = c.CleanUpInPlaceUpdate(replicas[target])
+				if err != nil {
+					return &status, err
+				}
+				continue
+			}
+		}
+
 		// wait for unhealthy pods to update
 		if !(getPodReady(replicas[target]) || replicas[target].DeletionTimestamp != nil) {
-			logger.V(4).Info("waiting for pod to update", "app", klog.KObj(app), "pod", klog.KObj(replicas[target]))
+			klog.InfoS("waiting for pod to update", "app", klog.KObj(app), "pod", klog.KObj(replicas[target]))
 			return &status, nil
 		}
 	}
@@ -658,4 +709,50 @@ func setAppCondition(status *unicore.AppStatus, condition apps.StatefulSetCondit
 		}
 	}
 	status.Conditions = append(newConditions, condition)
+}
+
+func setDefaultRollingUpdateStrategy(app *unicore.App) (updateNeeded bool, newRollingUpdate *unicore.RollingUpdateAppStrategy) {
+	zero := int32(0)
+	newRollingUpdate = &unicore.RollingUpdateAppStrategy{
+		Partition:             &zero,
+		MaxUnavailable:        &intstr.IntOrString{Type: intstr.Int, IntVal: 1},
+		PodUpdatePolicy:       unicore.RecreatePodUpdateStrategyType,
+		Paused:                false,
+		UnorderedUpdate:       false,
+		InPlaceUpdateStrategy: nil,
+		MinReadySeconds:       &zero,
+	}
+	updateNeeded = false
+	if app.Spec.UpdateStrategy.RollingUpdate == nil {
+		updateNeeded = true
+	} else {
+		if app.Spec.UpdateStrategy.RollingUpdate.Partition == nil {
+			updateNeeded = true
+		} else {
+			newRollingUpdate.Partition = app.Spec.UpdateStrategy.RollingUpdate.Partition
+		}
+
+		if app.Spec.UpdateStrategy.RollingUpdate.MaxUnavailable == nil {
+			updateNeeded = true
+		} else {
+			newRollingUpdate.MaxUnavailable = app.Spec.UpdateStrategy.RollingUpdate.MaxUnavailable
+		}
+
+		if app.Spec.UpdateStrategy.RollingUpdate.PodUpdatePolicy == "" {
+			updateNeeded = true
+		} else {
+			newRollingUpdate.PodUpdatePolicy = app.Spec.UpdateStrategy.RollingUpdate.PodUpdatePolicy
+		}
+
+		if app.Spec.UpdateStrategy.RollingUpdate.MinReadySeconds == nil {
+			updateNeeded = true
+		} else {
+			newRollingUpdate.MinReadySeconds = app.Spec.UpdateStrategy.RollingUpdate.MinReadySeconds
+		}
+
+		if app.Spec.UpdateStrategy.RollingUpdate.InPlaceUpdateStrategy != nil {
+			newRollingUpdate.InPlaceUpdateStrategy = app.Spec.UpdateStrategy.RollingUpdate.InPlaceUpdateStrategy
+		}
+	}
+	return updateNeeded, newRollingUpdate
 }

@@ -101,7 +101,7 @@ func (r *AppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (res ct
 
 	app, err := r.Lister.Apps(req.Namespace).Get(req.Name)
 	if errors.IsNotFound(err) {
-		klog.InfoS("app deleted", "app", req, "timeCost", time.Since(startTime))
+		klog.InfoS("app has been deleted", "app", req, "timeCost", time.Since(startTime))
 		return reconcile.Result{}, nil
 	}
 	if err != nil {
@@ -207,6 +207,10 @@ func (r *AppReconciler) Reconcile(ctx context.Context, req ctrl.Request) (res ct
 		return reconcile.Result{RequeueAfter: requeue_duration.Pop(unicoreApp.GetAppKey(app))}, err
 	}
 	klog.V(4).InfoS("sync app succeeded", "app", req, "timeCost", time.Since(startTime))
+	if err == nil && requeue_duration.Pop(unicoreApp.GetAppKey(app)) > 0 {
+		// reconcile for in-place update grace seconds
+		return reconcile.Result{RequeueAfter: requeue_duration.Pop(unicoreApp.GetAppKey(app)), Requeue: true}, nil
+	}
 	return ctrl.Result{}, nil
 }
 

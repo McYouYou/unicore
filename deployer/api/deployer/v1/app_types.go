@@ -200,7 +200,7 @@ type RollingUpdateAppStrategy struct {
 	UnorderedUpdate bool `json:"unorderedUpdate,omitempty"`
 	// InPlaceUpdateStrategy contains strategies for in-place update.
 	// +optional
-	InPlaceUpdateStrategy *inplace.InPlaceUpdateStrategy `json:"inPlaceUpdateStrategy,omitempty"`
+	InPlaceUpdateStrategy *inplace.Strategy `json:"inPlaceUpdateStrategy,omitempty"`
 	// MinReadySeconds indicates how long will the pod be considered ready after it's updated.
 	// MinReadySeconds works with both OrderedReady and Parallel podManagementPolicy.
 	// It affects the pod scale up speed when the podManagementPolicy is set to be OrderedReady.
@@ -222,10 +222,6 @@ const (
 	// recreating Pod when possible. Currently, only image update of pod spec is allowed. Any other changes to the pod
 	// spec will fall back to ReCreate PodUpdateStrategyType where pod will be recreated.
 	InPlaceIfPossiblePodUpdateStrategyType PodUpdateStrategyType = "InPlaceIfPossible"
-	// InPlaceOnlyPodUpdateStrategyType indicates that we will in-place update Pod instead of
-	// recreating pod. We only allow image update for pod spec. Any other changes to the pod spec will be
-	// rejected by kube-apiserver
-	InPlaceOnlyPodUpdateStrategyType PodUpdateStrategyType = "InPlaceOnly"
 )
 
 // VolumeClaimStatus describes the status of a volume claim template.
